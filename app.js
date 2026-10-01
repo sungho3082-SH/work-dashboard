@@ -784,8 +784,8 @@ function startEdit(pid,k){
   col.classList.add('editing');
   ta.removeAttribute('readonly'); ta.focus();
   ft.querySelector('[data-a="edit"]').outerHTML=
-    `<button class="btn-xs" data-a="cancel" data-p="${pid}" data-k="${k}">취소</button>
-     <button class="btn-xs solid" data-a="save" data-p="${pid}" data-k="${k}">저장</button>`;
+    `<button class="btn-xs" data-a="cancel" data-p="${pid}" data-k="${k}" title="Esc">취소</button>
+     <button class="btn-xs solid" data-a="save" data-p="${pid}" data-k="${k}" title="Ctrl+Enter">저장</button>`;
 }
 async function saveIssue(pid,k){
   const ta=$(`ta-${pid}-${k}`); if(!ta) return;
@@ -871,6 +871,37 @@ function cancelModal(){
   if(modalDirty() && !confirm('수정한 내용을 버리고 닫을까요?')) return;
   closeModal();
 }
+// ── Enter 로 저장 ──
+// 한 줄 입력 : Enter 로 바로 저장
+// 여러 줄 입력 : Enter 는 줄바꿈, Ctrl+Enter(Mac 은 ⌘+Enter)로 저장
+function initEnterToSave(){
+  const withMod = e => e.ctrlKey || e.metaKey;
+
+  // 수정창 안의 모든 입력칸
+  $('modalFields').addEventListener('keydown', e=>{
+    if(e.key!=='Enter') return;
+    const multiline = e.target.tagName==='TEXTAREA';
+    if(multiline && !withMod(e)) return;        // 줄바꿈은 그대로
+    e.preventDefault();
+    if(modalCallback) modalCallback();
+  });
+
+  // 단계 이슈 확대 편집창
+  $('bigTa').addEventListener('keydown', e=>{
+    if(e.key==='Enter' && withMod(e)){ e.preventDefault(); saveBig(); }
+  });
+
+  // 단계 카드 안에서 바로 쓰는 경우
+  document.addEventListener('keydown', e=>{
+    const ta=e.target;
+    if(!ta || !ta.classList || !ta.classList.contains('scol-ta')) return;
+    const m=/^ta-(\d+)-(\w+)$/.exec(ta.id||'');
+    if(!m) return;
+    if(e.key==='Enter' && withMod(e)){ e.preventDefault(); saveIssue(Number(m[1]), m[2]); }
+    else if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); cancelIssue(Number(m[1]), m[2]); }
+  });
+}
+
 // 배경(바깥 여백)을 '눌렀다 뗀' 경우에만 닫는다.
 // 창 안에서 드래그를 시작해 바깥에서 손을 떼면 click 의 target 이 배경이 되는데,
 // 이건 글자 선택이지 닫으려는 동작이 아니므로 무시한다.
@@ -1139,7 +1170,7 @@ function openTodoEdit(id, field){
   const multi = field==='action_plan';
   openModal(labels[field]+' 수정',
     multi ? `<div class="modal-field"><textarea class="modal-input" id="tv" style="line-height:1.85;font-size:13.5px;">${esc(val)}</textarea></div>
-             <div class="resize-hint">Ctrl+V 로 사진을 바로 첨부할 수 있습니다 · 모서리를 끌면 창 크기가 바뀌고 기억됩니다</div>`
+             <div class="resize-hint">Ctrl+Enter 로 저장 · Ctrl+V 로 사진 첨부 · 모서리를 끌면 창 크기가 바뀌고 기억됩니다</div>`
           : `<input class="modal-input" id="tv" value="${attr(val)}" ${isDate?'placeholder="2026/10/01"':''}>`
             + (isDate?'<div class="resize-hint" style="text-align:left;">2026/10/01 형식. 연도를 빼고 10/01 만 적으면 올해로 들어갑니다. 비우면 지워집니다.</div>':''),
     async()=>{
@@ -1251,6 +1282,7 @@ function init(){
 
   document.body.addEventListener('click', onBodyClick);
   initDropPaste();
+  initEnterToSave();
   document.addEventListener('keydown', e=>{
     if(e.key!=='Escape') return;
     if($('viewer').classList.contains('on')){ $('viewer').classList.remove('on'); return; }
