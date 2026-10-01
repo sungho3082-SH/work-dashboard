@@ -1,0 +1,14 @@
+# 원본 자료 (사이트 구동에 불필요 + 협력사 상세자료 포함)
+개발현황_관리.xlsx
+이성호_개발현황_*.html
+*.xlsm
+~$*
+
+# 작업용
+node_modules/
+.vercel/
+.DS_Store
+Thumbs.db
+
+# DB 에 이미 반영된 초기 데이터 (협력사 지적사항 본문 포함)
+import_data.sql
