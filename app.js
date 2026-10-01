@@ -7,7 +7,7 @@
 let sb = null;
 let projects = [], schedules = [], boms = [], todos = [], attachments = [];
 let schedMap = {};                 // car_model → car_schedules 행
-let hasSched = true, hasBom = true, hasCk = true;   // 마이그레이션 여부
+let hasSched = true, hasBom = true, hasCk = true, hasOpenDate = true;   // 마이그레이션 여부
 let carColor = {}, _ci = 0;
 
 let curView = 'home';
@@ -50,6 +50,22 @@ function toDate(s){ if(!s) return null; const v=String(s).slice(0,10); const d=n
 function ymd(d){ return d ? d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0') : ''; }
 function md(d){ return d ? (d.getMonth()+1)+'/'+d.getDate() : ''; }
 function clean(v){ return v ? String(v).slice(0,10) : ''; }
+// 화면 표시는 전부 YYYY/MM/DD, DB 에는 YYYY-MM-DD 로 저장
+function slash(v){ return clean(v).replace(/-/g,'/'); }
+function ymdS(d){ return slash(ymd(d)); }
+// 입력 해석: 2026/10/01 · 2026-10-01 · 10/01(올해) 전부 허용
+// 반환 — 'YYYY-MM-DD' | null(비움) | undefined(형식 오류)
+function parseDateInput(v){
+  const t=String(v==null?'':v).trim();
+  if(!t) return null;
+  let m=t.match(/^(\d{4})[\/.\-](\d{1,2})[\/.\-](\d{1,2})$/);
+  if(m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
+  m=t.match(/^(\d{1,2})[\/.\-](\d{1,2})$/);            // 연도 생략 → 올해
+  if(m) return `${today.getFullYear()}-${m[1].padStart(2,'0')}-${m[2].padStart(2,'0')}`;
+  m=t.match(/^(\d{4})(\d{2})(\d{2})$/);                // 20261001
+  if(m) return `${m[1]}-${m[2]}-${m[3]}`;
+  return undefined;
+}
 function addDays(d,n){ const x=new Date(d); x.setDate(x.getDate()+n); return x; }
 function daysUntil(d){ return d ? Math.ceil((d-today)/86400000) : null; }
 function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -94,12 +110,11 @@ async function shrinkImage(file){
   }catch(e){ console.warn('이미지 압축 실패, 원본 업로드', e); return file; }
 }
 function askDate(label, cur){
-  const v = prompt(label+'\nYYYY-MM-DD 형식. 비우면 삭제(생략 처리)', cur||'');
+  const v = prompt(label+'\n2026/10/01 형식 (10/01 처럼 연도 생략 가능)\n비우면 삭제(생략 처리)', slash(cur)||'');
   if(v===null) return undefined;                 // 취소
-  const t=v.trim();
-  if(t==='') return null;                        // 삭제
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(t)){ alert('날짜 형식: YYYY-MM-DD'); return undefined; }
-  return t;
+  const r = parseDateInput(v);
+  if(r===undefined){ alert('날짜 형식이 올바르지 않습니다.\n예: 2026/10/01 또는 10/01'); return undefined; }
+  return r;                                      // null 이면 삭제
 }
 
 // ════════ 일정 (차종 단위) ════════
@@ -184,7 +199,7 @@ function flowHtml(car, parts, size){
     const past = ps && ps.start && ps.start<=today;
     const cd = cks[c.k];
     const cls = 'fchk' + (past?'':' future') + (cd?'':' none');
-    const tip = c.n + (cd ? ' : '+ymd(cd) : ' : 미실시');
+    const tip = c.n + (cd ? ' : '+ymdS(cd) : ' : 미실시');
     h += `<div class="${cls}" style="left:${L(c.pos)}" title="${attr(tip)}">
             <div class="flbl"><div class="fd">${cd?md(cd):''}</div><div class="fl">${big?c.n:c.s}</div></div>
             <div class="st">★</div></div>`;
@@ -195,7 +210,7 @@ function flowHtml(car, parts, size){
     let cls='circ';
     if(nd.skip) cls+=' skip';
     else { if(nd.start<=today) cls+=' done'; if(i===curGI) cls+=' cur'; }
-    h += `<div class="${cls}" style="left:${L(nd.pos)};--c:${nd.c}" title="${attr(nd.n+(nd.start?' : '+ymd(nd.start):' : 생략'))}"></div>`;
+    h += `<div class="${cls}" style="left:${L(nd.pos)};--c:${nd.c}" title="${attr(nd.n+(nd.start?' : '+ymdS(nd.start):' : 생략'))}"></div>`;
     const dcls = big ? 'sd edit' : 'sd';
     h += `<div class="stg${nd.skip?' skip':''}" style="left:${L(nd.pos)}">
             <div class="${dcls}" ${big?`data-a="sched" data-car="${attr(car)}" data-k="${nd.k}"`:''}>${nd.skip?'—':md(nd.start)}</div>
@@ -312,6 +327,7 @@ async function loadAll(){
   hasBom   = bm.ok; boms      = bm.ok ? bm.data : [];
   todos = td.ok ? td.data : [];
   attachments = at.ok ? at.data : [];
+  hasOpenDate = !todos.length || ('open_date' in todos[0]);
 
   schedMap = {}; schedules.forEach(r=>{ schedMap[r.car_model]=r; });
   projects.forEach(p=>getColor(p.car_model));
@@ -321,6 +337,7 @@ async function loadAll(){
   if(!hasSched) miss.push('car_schedules 테이블');
   if(!hasBom)   miss.push('bom 테이블');
   if(!hasCk)    miss.push('체크포인트 컬럼');
+  if(!hasOpenDate) miss.push('todos.open_date 컬럼');
   if(miss.length){ $('migWhat').textContent = miss.join(' / ')+' 없음'; $('migBanner').classList.add('on'); }
   else $('migBanner').classList.remove('on');
 
@@ -534,7 +551,7 @@ function buildPanel(p, col){
           <span class="scol-name" style="background:${s.c};">${s.n}</span>
           <span class="scol-badge ${bcls}">${badge}</span>
         </div>
-        <div class="scol-date">시작 <b>${nd.start?ymd(nd.start):'—'}</b>
+        <div class="scol-date">시작 <b>${nd.start?ymdS(nd.start):'—'}</b>
           <button class="btn-xs" style="padding:1px 6px;" data-a="sched" data-car="${attr(p.car_model)}" data-k="${s.k}" title="차종 공통 일정 수정"><i class="ti ti-pencil"></i></button>
         </div>
       </div>
@@ -556,7 +573,7 @@ function buildPanel(p, col){
   const ckRow = hasCk ? CKS.map(c=>{
     const d=toDate(p[c.k]);
     return `<span class="ck ${d?'on':'off'}" style="cursor:pointer;font-size:10.5px;padding:3px 9px;"
-             data-a="ck" data-p="${p.id}" data-f="${c.k}">${c.n}${d?' '+ymd(d):' 미실시'}</span>`;
+             data-a="ck" data-p="${p.id}" data-f="${c.k}">${c.n}${d?' '+ymdS(d):' 미실시'}</span>`;
   }).join('') : '';
 
   const pics = photosOf(p.id).filter(a=>!a.stage);
@@ -685,10 +702,13 @@ function renderTodos(){
       <td class="c-no">${idx+1}</td>
       <td class="c-check"><button class="todo-check${t.done?' on':''}" data-a="toggle">${t.done?'✓':''}</button></td>
       <td class="c-title" data-a="tedit" data-f="title">${esc(t.title||t.content||'')}</td>
+      <td class="c-date" ${hasOpenDate?'data-a="tedit" data-f="open_date"':''}>${
+        hasOpenDate ? (t.open_date?slash(t.open_date):`<span class="ph">${slash(t.created_at)}</span>`)
+                    : `<span class="ph">${slash(t.created_at)}</span>`}</td>
       <td class="c-action"><div class="action-box" data-a="tedit" data-f="action_plan">${
         esc(t.action_plan||'').replace(/\n/g,'<br>')||'<span class="ph">클릭하여 입력</span>'}</div></td>
       <td class="c-due" data-a="tedit" data-f="due_date"><span class="${over?'due-over':''}">${
-        t.due_date?clean(t.due_date):'<span class="ph">-</span>'}</span>${
+        t.due_date?slash(t.due_date):'<span class="ph">-</span>'}</span>${
         dd!==null&&!t.done&&t.due_date?`<div class="due-dday ${over?'over':''}">D${dd>=0?'-'+dd:'+'+(-dd)}</div>`:''}</td>
       <td class="c-resp" data-a="tedit" data-f="resp">${esc(t.resp||'')||'<span class="ph">-</span>'}</td>
       <td class="c-prio"><select class="prio-sel" data-a="tprio">
@@ -702,7 +722,7 @@ function renderTodos(){
       <td class="c-del"><button class="todo-del" data-a="tdel" title="이슈 행 전체 삭제">✕</button></td></tr>`;
   });
   wrap.innerHTML=`<table class="todo-table">
-    <thead><tr><th>No.</th><th>완료</th><th>Title</th><th>Action Plan</th><th>Due date</th>
+    <thead><tr><th>No.</th><th>완료</th><th>Title</th><th>Date</th><th>Action Plan</th><th>Due date</th>
       <th>Resp.</th><th>Priority</th><th>Remarks</th><th></th></tr></thead>
     <tbody>${rows}</tbody></table>`;
 }
@@ -1094,20 +1114,24 @@ async function deleteTodo(id){
 function openTodoEdit(id, field){
   const t=todos.find(x=>x.id===id); if(!t) return;
   modalTodoId=id;        // 편집창이 열려 있는 동안 Ctrl+V 는 이 이슈로 첨부
-  const labels={ title:'Title', action_plan:'Action Plan', due_date:'Due date (YYYY-MM-DD)', resp:'책임자(Resp.)' };
+  const labels={ title:'Title', action_plan:'Action Plan',
+                 open_date:'Date — 이슈 발생/기록일', due_date:'Due date — 완료 목표일', resp:'책임자(Resp.)' };
+  const isDate = field==='due_date' || field==='open_date';
   let val=t[field]||'';
-  if(field==='due_date') val=clean(val);
+  if(isDate) val=slash(val);
   const multi = field==='action_plan';
   openModal(labels[field]+' 수정',
     multi ? `<div class="modal-field"><textarea class="modal-input" id="tv" style="line-height:1.85;font-size:13.5px;">${esc(val)}</textarea></div>
              <div class="resize-hint">Ctrl+V 로 사진을 바로 첨부할 수 있습니다 · 모서리를 끌면 창 크기가 바뀌고 기억됩니다</div>`
-          : `<input class="modal-input" id="tv" value="${attr(val)}" ${field==='due_date'?'placeholder="YYYY-MM-DD"':''}>`,
+          : `<input class="modal-input" id="tv" value="${attr(val)}" ${isDate?'placeholder="2026/10/01"':''}>`
+            + (isDate?'<div class="resize-hint" style="text-align:left;">2026/10/01 형식. 연도를 빼고 10/01 만 적으면 올해로 들어갑니다. 비우면 지워집니다.</div>':''),
     async()=>{
       let v=$('tv').value;
       if(field!=='action_plan') v=v.trim();
-      if(field==='due_date'){
-        if(v && !/^\d{4}-\d{2}-\d{2}$/.test(v)){ alert('날짜 형식: YYYY-MM-DD'); return; }
-        v=v||null;
+      if(isDate){
+        const r=parseDateInput(v);
+        if(r===undefined){ alert('날짜 형식이 올바르지 않습니다.\n예: 2026/10/01 또는 10/01'); return; }
+        v=r;
       }
       await updateTodo(id,{ [field]:v }); closeModal();
     }, multi);

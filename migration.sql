@@ -90,3 +90,14 @@ create policy "bom public" on bom
 select 'car_schedules' as t, count(*) from car_schedules
 union all select 'bom', count(*) from bom
 union all select 'projects', count(*) from projects;
+
+-- ════════════════════════════════════════════════════════
+-- 추가 (2026-10-01) : Open Issue List 의 Date 컬럼
+-- 이미 실행했어도 다시 돌려도 안전합니다.
+-- ════════════════════════════════════════════════════════
+alter table todos add column if not exists open_date date;
+
+-- 기존 이슈는 등록된 날짜로 채워둡니다 (비어 있는 것만)
+update todos set open_date = created_at::date where open_date is null;
+
+select 'todos.open_date 준비됨' as result, count(*) as 채워진행 from todos where open_date is not null;
