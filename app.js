@@ -75,6 +75,11 @@ function setConn(cls,msg){ const el=$('connStatus'); el.className='chip-s '+cls;
 function showLoading(m){ $('loadingText').textContent=m||'처리 중...'; $('loading').classList.remove('hidden'); }
 function hideLoading(){ $('loading').classList.add('hidden'); }
 function viewImg(src){ $('viewerImg').src=src; $('viewer').classList.add('on'); }
+// 지금 글자가 드래그로 선택돼 있는가
+function hasSelection(){
+  const s=window.getSelection();
+  return !!(s && s.type==='Range' && String(s).trim());
+}
 function isImg(n){ return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(n||''); }
 
 // ── 첨부: 업로드 파일 vs 외부 링크 ──
@@ -866,6 +871,18 @@ function cancelModal(){
   if(modalDirty() && !confirm('수정한 내용을 버리고 닫을까요?')) return;
   closeModal();
 }
+// 배경(바깥 여백)을 '눌렀다 뗀' 경우에만 닫는다.
+// 창 안에서 드래그를 시작해 바깥에서 손을 떼면 click 의 target 이 배경이 되는데,
+// 이건 글자 선택이지 닫으려는 동작이 아니므로 무시한다.
+function onBackdropClick(overlayId, onClose){
+  const ov=$(overlayId); let downOnBackdrop=false;
+  ov.addEventListener('mousedown', e=>{ downOnBackdrop = (e.target===ov); });
+  ov.addEventListener('click', e=>{
+    const ok = (e.target===ov) && downOnBackdrop;
+    downOnBackdrop=false;
+    if(ok) onClose();
+  });
+}
 // 확대 편집창 닫기
 function closeBig(force){
   if(!force && bigSnap!==null && $('bigTa').value!==bigSnap){
@@ -1174,7 +1191,8 @@ function onBodyClick(e){
     if(a==='tdel'){ deleteTodo(tid); return; }
     if(a==='tattach'){ addFile(null,tid); return; }
     if(a==='tlink'){ addLink(null,tid); return; }
-    if(a==='tedit'){ openTodoEdit(tid, el.dataset.f, false); return; }
+    // 글자를 드래그로 선택한 직후의 클릭은 편집창을 열지 않는다 (복사하려던 동작)
+    if(a==='tedit'){ if(hasSelection()) return; openTodoEdit(tid, el.dataset.f); return; }
   }
 }
 
@@ -1199,13 +1217,15 @@ function init(){
   $('newBtn').addEventListener('click', openNewModal);
   $('modalSaveBtn').addEventListener('click', ()=>{ if(modalCallback) modalCallback(); });
   $('modalCancelBtn').addEventListener('click', cancelModal);
-  $('modalOverlay').addEventListener('click', e=>{ if(e.target===$('modalOverlay')) tryCloseModal(); });
+  // 바깥 클릭으로 닫기 — 단, 창 안에서 시작한 드래그(글자 선택)는 닫지 않는다
+  onBackdropClick('modalOverlay', tryCloseModal);
   $('bigCancel').addEventListener('click', ()=>{
     if(bigSnap!==null && $('bigTa').value!==bigSnap && !confirm('수정한 내용을 버리고 닫을까요?')) return;
     closeBig(true);
   });
   $('bigSave').addEventListener('click', saveBig);
-  $('bigOverlay').addEventListener('click', e=>{ if(e.target===$('bigOverlay')) closeBig(false); });
+  onBackdropClick('bigOverlay', ()=>closeBig(false));
+  onBackdropClick('viewer', ()=>$('viewer').classList.remove('on'));
   // 모달 크기를 바꾸면 기억해둔다
   document.addEventListener('mouseup', ()=>{
     const mb=$('modalBox'), bb=$('bigBox');
