@@ -420,7 +420,7 @@ function homeIssueCell(parts){
     // 썸네일은 첫 항목 안에 넣어야 float 이 td 밖으로 새지 않는다
     return stageIssues(rep).map((si,i)=>{
       const [bg,fg]=STAGE_SOFT[si.stage.k];
-      return `<div class="iitem${i>0?' sep':''}">${i===0?thumbs:''}<div class="itop">
+      return `<div class="iitem${i>0?' isep':''}">${i===0?thumbs:''}<div class="itop">
           <span class="ispill" style="background:${bg};color:${fg}">${si.stage.n}</span>
           <span class="inm">${names}</span>
           <span class="isup">${esc(rep.part_number||'')}</span></div>
