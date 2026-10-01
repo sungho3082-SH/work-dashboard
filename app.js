@@ -60,6 +60,39 @@ function showLoading(m){ $('loadingText').textContent=m||'처리 중...'; $('loa
 function hideLoading(){ $('loading').classList.add('hidden'); }
 function viewImg(src){ $('viewerImg').src=src; $('viewer').classList.add('on'); }
 function isImg(n){ return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(n||''); }
+
+// ── 첨부: 업로드 파일 vs 외부 링크 ──
+const MAX_UPLOAD = 50*1024*1024;        // Supabase 무료 플랜 파일당 한도
+const IMG_MAX_EDGE = 2000, IMG_QUALITY = .85;
+// 우리 Storage 주소가 아니면 외부 링크로 취급
+function isExternal(a){
+  const u=a&&a.file_url||'';
+  return !!u && (typeof SUPABASE_URL==='undefined' || u.indexOf(SUPABASE_URL)!==0);
+}
+function linkSource(url){
+  const u=String(url||'').toLowerCase();
+  if(u.includes('sharepoint.com')||u.includes('-my.sharepoint'))   return 'SharePoint';
+  if(u.includes('onedrive.live.com')||u.includes('1drv.ms'))       return 'OneDrive';
+  if(u.includes('drive.google.com')||u.includes('docs.google.com'))return 'Google Drive';
+  if(u.includes('dropbox.com'))                                    return 'Dropbox';
+  try{ return new URL(url).hostname.replace(/^www\./,''); }catch(e){ return '링크'; }
+}
+function fmtSize(b){ return b>=1048576 ? (b/1048576).toFixed(1)+'MB' : Math.max(1,Math.round(b/1024))+'KB'; }
+// 사진은 올리기 전에 줄인다 (긴 변 2000px, JPEG 85%)
+async function shrinkImage(file){
+  if(!/^image\//.test(file.type) || /svg|gif/i.test(file.type)) return file;
+  if(file.size < 400*1024) return file;                 // 이미 작으면 그대로
+  try{
+    const bmp = await createImageBitmap(file, { imageOrientation:'from-image' });
+    const scale = Math.min(1, IMG_MAX_EDGE/Math.max(bmp.width, bmp.height));
+    const w=Math.round(bmp.width*scale), h=Math.round(bmp.height*scale);
+    const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+    cv.getContext('2d').drawImage(bmp,0,0,w,h);
+    const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',IMG_QUALITY));
+    if(!blob || blob.size>=file.size) return file;      // 오히려 커지면 원본
+    return new File([blob], file.name.replace(/\.[^.]+$/,'')+'.jpg', { type:'image/jpeg' });
+  }catch(e){ console.warn('이미지 압축 실패, 원본 업로드', e); return file; }
+}
 function promptDate(){
   const t=new Date(), def=String(t.getMonth()+1).padStart(2,'0')+'/'+String(t.getDate()).padStart(2,'0');
   const v=prompt('날짜 입력 (MM/DD)', def);
@@ -366,7 +399,7 @@ function homeIssueCell(parts){
     const names = g.members.length>1 ? `${nm} <span class="imore">외 ${g.members.length-1}개</span>` : nm;
     const pics = [].concat(...g.members.map(m=>photosOf(m.id)));
     const thumbs = pics.length
-      ? `<div class="ithumbs">${pics.slice(0,6).map(a=>isImg(a.file_name||a.file_url)
+      ? `<div class="ithumbs">${pics.slice(0,6).map(a=>(!isExternal(a)&&isImg(a.file_name||a.file_url))
           ? `<img class="ith" src="${attr(a.file_url)}" data-a="view" data-url="${attr(a.file_url)}">`
           : '').join('')}</div>`
       : '';
@@ -502,11 +535,7 @@ function buildPanel(p, col){
     }
     const txt = p[s.k+'_issue']||'';
     const pics = photosOf(p.id, s.k);
-    const thumbs = pics.length ? `<div style="display:flex;gap:4px;flex-wrap:wrap;padding:7px 8px 0;">
-        ${pics.map(a=>isImg(a.file_name||a.file_url)
-          ? `<img src="${attr(a.file_url)}" data-a="view" data-url="${attr(a.file_url)}" style="width:40px;height:40px;object-fit:cover;border-radius:5px;border:1px solid var(--line);cursor:zoom-in;">`
-          : `<a href="${attr(a.file_url)}" target="_blank" class="rm-file"><i class="ti ti-file"></i></a>`).join('')}
-      </div>` : '';
+    const thumbs = pics.length ? `<div class="scol-atts">${pics.map(a=>attachHtml(a,'sm')).join('')}</div>` : '';
     return `<div class="scol${skip?' skip':''}" id="sc-${p.id}-${s.k}">
       <div class="scol-head">
         <div class="scol-top">
@@ -525,6 +554,7 @@ function buildPanel(p, col){
         <button class="btn-xs" data-a="adddate" data-p="${p.id}" data-k="${s.k}">+날짜</button>
         <button class="btn-xs" data-a="big" data-p="${p.id}" data-k="${s.k}" title="크게 보기"><i class="ti ti-arrows-diagonal"></i></button>
         <button class="btn-xs" data-a="pic" data-p="${p.id}" data-k="${s.k}" title="사진/파일"><i class="ti ti-paperclip"></i></button>
+        <button class="btn-xs" data-a="link" data-p="${p.id}" data-k="${s.k}" title="링크 첨부"><i class="ti ti-link"></i></button>
         <span class="spacer"></span>
         <button class="btn-xs" data-a="edit" data-p="${p.id}" data-k="${s.k}">수정</button>
       </div>
@@ -539,12 +569,10 @@ function buildPanel(p, col){
   }).join('') : '';
 
   const pics = photosOf(p.id).filter(a=>!a.stage);
-  const photoHtml = pics.map(a=>`<div class="photo-item">${
-      isImg(a.file_name||a.file_url)
-        ? `<img src="${attr(a.file_url)}" data-a="view" data-url="${attr(a.file_url)}">`
-        : `<a href="${attr(a.file_url)}" target="_blank" class="file-chip"><i class="ti ti-file"></i><span>${esc(a.file_name||'파일')}</span></a>`
+  const photoHtml = pics.map(a=>`<div class="photo-item${isExternal(a)?' is-link':''}">${attachHtml(a,'lg')
     }<button class="photo-del" data-a="delpic" data-id="${a.id}">✕</button></div>`).join('')
-    + `<div class="photo-add" data-a="pic" data-p="${p.id}"><i class="ti ti-camera-plus"></i>사진/파일</div>`;
+    + `<div class="photo-add" data-a="pic" data-p="${p.id}"><i class="ti ti-camera-plus"></i>사진/파일</div>`
+    + `<div class="photo-add" data-a="link" data-p="${p.id}"><i class="ti ti-link"></i>링크</div>`;
 
   const el=document.createElement('div');
   el.className='ep';
@@ -659,9 +687,7 @@ function renderTodos(){
     const dd=t.due_date?daysUntil(toDate(t.due_date)):null;
     const over=dd!==null&&dd<0&&!t.done;
     const atts=attachments.filter(a=>a.todo_id===t.id);
-    const rm=atts.map(a=>isImg(a.file_name||a.file_url)
-      ? `<img class="rm-thumb" src="${attr(a.file_url)}" data-a="view" data-url="${attr(a.file_url)}">`
-      : `<a href="${attr(a.file_url)}" target="_blank" class="rm-file"><i class="ti ti-file"></i></a>`).join('');
+    const rm=atts.map(a=>attachHtml(a,'sm')).join('');
     rows+=`<tr class="trow${t.done?' done':''}" data-id="${t.id}">
       <td class="c-no">${idx+1}</td>
       <td class="c-check"><button class="todo-check${t.done?' on':''}" data-a="toggle">${t.done?'✓':''}</button></td>
@@ -677,7 +703,9 @@ function renderTodos(){
         <option value="high" ${t.priority==='high'?'selected':''}>높음</option>
         <option value="normal" ${(!t.priority||t.priority==='normal')?'selected':''}>보통</option>
         <option value="low" ${t.priority==='low'?'selected':''}>낮음</option></select></td>
-      <td class="c-remark"><div class="remark-atts">${rm}</div><button class="btn-xs" data-a="tattach">+ 첨부</button></td>
+      <td class="c-remark"><div class="remark-atts">${rm}</div>
+        <button class="btn-xs" data-a="tattach">+ 첨부</button>
+        <button class="btn-xs" data-a="tlink">+ 링크</button></td>
       <td class="c-del"><button class="todo-del" data-a="tdel">✕</button></td></tr>`;
   });
   wrap.innerHTML=`<table class="todo-table">
@@ -859,9 +887,19 @@ function openNewModal(){
 function addFile(pid, tid, stage){
   const inp=document.createElement('input'); inp.type='file';
   inp.onchange=async()=>{
-    const file=inp.files[0]; if(!file) return;
+    let file=inp.files[0]; if(!file) return;
     showLoading('업로드 중...');
     try{
+      const before=file.size;
+      file = await shrinkImage(file);
+      if(file.size>MAX_UPLOAD){
+        hideLoading();
+        alert(`파일이 너무 큽니다 (${fmtSize(file.size)}).\n`
+            + `직접 올릴 수 있는 한도는 ${fmtSize(MAX_UPLOAD)} 입니다.\n\n`
+            + `사내 드라이브(OneDrive/SharePoint)에 올리신 뒤\n"+ 링크" 버튼으로 주소를 등록하세요.`);
+        return;
+      }
+      if(before!==file.size) showLoading(`업로드 중... (${fmtSize(before)} → ${fmtSize(file.size)} 압축)`);
       const ext=(file.name.split('.').pop()||'bin');
       const folder = pid?`proj_${pid}`:`todo_${tid}`;
       const path=`${folder}/${Date.now()}.${ext}`;
@@ -879,6 +917,50 @@ function addFile(pid, tid, stage){
     }catch(e){ hideLoading(); alert('업로드 실패: '+(e.message||e)); }
   };
   inp.click();
+}
+// ── 외부 링크 첨부 (OneDrive / SharePoint / Google Drive …) ──
+function addLink(pid, tid, stage){
+  openModal('링크 첨부',
+    `${fieldHtml('name','표시할 이름','','예: JG 공정감사 결과')}
+     <div class="modal-field"><label class="modal-label">주소 (URL)<span class="req">*</span></label>
+       <textarea class="modal-input" data-k="url" style="min-height:84px;font-size:12px;"
+         placeholder="https://... (사내 드라이브에서 '링크 복사'한 주소를 붙여넣으세요)"></textarea></div>
+     <div style="font-size:11px;color:var(--muted);line-height:1.6;">
+       주소는 화면에 보이지 않습니다. 위에 적은 이름만 표시되고, 누르면 새 탭에서 열립니다.<br>
+       OneDrive·SharePoint 는 공유 범위를 <b>조직 내 모든 사용자</b>로 잡아두셔야 팀원이 열 수 있습니다.</div>`,
+    async()=>{
+      const get=k=>{ const el=document.querySelector(`#modalFields [data-k="${k}"]`); return el?el.value.trim():''; };
+      const url=get('url');
+      if(!url){ alert('주소를 입력하세요.'); return; }
+      if(!/^https?:\/\//i.test(url)){ alert('주소는 http:// 또는 https:// 로 시작해야 합니다.'); return; }
+      const rec={ file_url:url, file_name:get('name') || linkSource(url) };
+      if(pid) rec.project_id=pid;
+      if(tid) rec.todo_id=tid;
+      if(stage) rec.stage=stage;
+      showLoading('저장 중...');
+      const { data, error } = await sb.from('attachments').insert(rec).select();
+      hideLoading();
+      if(error){ alert('저장 실패: '+error.message); return; }
+      attachments.push(data[0]); closeModal(); renderAll();
+    });
+}
+// 첨부 하나를 화면에 그리는 공통 조각
+function attachHtml(a, size){
+  const url=attr(a.file_url), nm=esc(a.file_name||'첨부');
+  if(isExternal(a)){
+    const src=esc(linkSource(a.file_url));
+    if(size==='sm') return `<a href="${url}" target="_blank" rel="noopener" class="rm-file" title="${nm} · ${src}"><i class="ti ti-link"></i></a>`;
+    return `<a href="${url}" target="_blank" rel="noopener" class="file-chip link-chip" title="${nm} · ${src}">
+              <i class="ti ti-link"></i><span>${nm}</span><span class="src">${src}</span></a>`;
+  }
+  if(isImg(a.file_name||a.file_url)){
+    return size==='sm'
+      ? `<img class="rm-thumb" src="${url}" data-a="view" data-url="${url}">`
+      : `<img src="${url}" data-a="view" data-url="${url}">`;
+  }
+  return size==='sm'
+    ? `<a href="${url}" target="_blank" rel="noopener" class="rm-file" title="${nm}"><i class="ti ti-file"></i></a>`
+    : `<a href="${url}" target="_blank" rel="noopener" class="file-chip"><i class="ti ti-file"></i><span>${nm}</span></a>`;
 }
 async function deleteAttachment(id){
   if(!confirm('삭제하시겠습니까?')) return;
@@ -958,6 +1040,7 @@ function onBodyClick(e){
   if(a==='adddate'){ addDateMark(pid,k); return; }
   if(a==='big'){ openBig(pid,k); return; }
   if(a==='pic'){ addFile(pid,null,k||null); return; }
+  if(a==='link'){ addLink(pid,null,k||null); return; }
   if(a==='delpic'){ deleteAttachment(Number(el.dataset.id)); return; }
   if(a==='editbasic'){ openBasicModal(pid); return; }
   if(a==='delproj'){ deleteProject(pid); return; }
@@ -969,6 +1052,7 @@ function onBodyClick(e){
     if(a==='toggle'){ toggleTodo(tid); return; }
     if(a==='tdel'){ deleteTodo(tid); return; }
     if(a==='tattach'){ addFile(null,tid); return; }
+    if(a==='tlink'){ addLink(null,tid); return; }
     if(a==='tplandate'){ openTodoEdit(tid,'action_plan',true); return; }
     if(a==='tedit'){ openTodoEdit(tid, el.dataset.f, false); return; }
   }

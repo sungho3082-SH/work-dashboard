@@ -208,6 +208,19 @@ body{background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;mi
   color:var(--sub);text-decoration:none;font-size:9px;padding:5px;}
 .file-chip i{font-size:20px;}
 .file-chip span{max-width:92px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* 외부 링크 첨부 (OneDrive / SharePoint / Drive …) */
+.photo-item.is-link{background:var(--card2);border-style:dashed;}
+.photo-item.is-link:hover{border-color:var(--accent);}
+.link-chip{gap:5px;}
+.link-chip i{color:var(--accent2);}
+.link-chip span:first-of-type{font-size:10.5px;font-weight:650;color:var(--ink);white-space:normal;
+  line-height:1.3;max-height:2.6em;overflow:hidden;text-align:center;}
+.link-chip .src{font-size:8.5px;color:var(--muted);background:rgba(255,255,255,.05);
+  padding:1px 6px;border-radius:4px;max-width:90px;}
+.scol-atts{display:flex;gap:4px;flex-wrap:wrap;padding:7px 8px 0;}
+.scol-atts .rm-thumb{width:38px;height:38px;}
+.scol-atts .rm-file{width:38px;height:38px;}
+.rm-file i{font-size:15px;}
 
 /* ═══════════ 홈 탭 ═══════════ */
 .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;margin-bottom:14px;}
