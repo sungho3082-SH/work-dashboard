@@ -197,9 +197,10 @@ body{background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;mi
 .photo-item{position:relative;width:104px;height:104px;border-radius:8px;overflow:hidden;
   border:1px solid var(--line);background:var(--card);}
 .photo-item img{width:100%;height:100%;object-fit:cover;cursor:zoom-in;}
-.photo-del{position:absolute;top:3px;right:3px;width:20px;height:20px;border-radius:5px;background:rgba(0,0,0,.65);
+.photo-del{position:absolute;top:3px;right:3px;width:17px;height:17px;border-radius:50%;background:rgba(0,0,0,.6);opacity:0;transition:.12s;
   color:#fff;border:none;cursor:pointer;font-size:11px;display:flex;align-items:center;justify-content:center;}
-.photo-del:hover{background:rgba(248,113,113,.85);}
+.photo-del:hover{background:rgba(185,28,28,.95);opacity:1;}
+.photo-item:hover .photo-del{opacity:.75;}
 .photo-add{width:104px;height:104px;border-radius:8px;border:2px dashed var(--line);background:var(--card);
   color:var(--sub);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font-size:11px;}
 .photo-add:hover{border-color:var(--accent);color:var(--accent2);}
@@ -356,9 +357,26 @@ table.bom{width:100%;border-collapse:collapse;}
 .rm-thumb{width:38px;height:38px;object-fit:cover;border-radius:5px;cursor:zoom-in;border:1px solid var(--line);}
 .rm-file{width:38px;height:38px;border-radius:5px;background:var(--card2);border:1px solid var(--line);
   display:flex;align-items:center;justify-content:center;color:var(--sub);text-decoration:none;}
-.c-del{width:34px;text-align:center;}
-.todo-del{background:none;border:none;color:var(--dim);cursor:pointer;font-size:15px;padding:2px 6px;}
-.todo-del:hover{color:#fca5a5;}
+.c-del{width:30px;text-align:center;padding-left:14px;}
+/* 행 전체 삭제 — 작고 흐리게, 마우스를 올려야 보임 */
+.todo-del{background:none;border:none;color:var(--dim);cursor:pointer;font-size:10px;padding:2px 4px;
+  opacity:.25;transition:.12s;line-height:1;}
+.trow:hover .todo-del{opacity:.65;}
+.todo-del:hover{color:#fca5a5;opacity:1 !important;}
+
+/* 첨부 하나씩 삭제 */
+.att-wrap{position:relative;display:inline-flex;}
+.att-del{position:absolute;top:-5px;right:-5px;width:15px;height:15px;border-radius:50%;
+  background:#2a3550;color:var(--sub);border:1px solid var(--line);cursor:pointer;font-size:9px;
+  line-height:1;display:none;align-items:center;justify-content:center;padding:0;}
+.att-wrap:hover .att-del{display:flex;}
+.att-del:hover{background:#7f1d1d;color:#fff;border-color:#b91c1c;}
+
+/* 끌어넣기 */
+.drop-hint{font-size:9.5px;color:var(--dim);margin-top:4px;}
+.drop-on{outline:2px dashed var(--accent2) !important;outline-offset:-3px;
+  background:rgba(99,102,241,.12) !important;}
+tr.drop-on td{background:rgba(99,102,241,.12) !important;}
 
 /* ═══════════ 모달 / 뷰어 / 로딩 ═══════════ */
 .overlay{position:fixed;inset:0;background:rgba(6,9,16,.78);z-index:150;display:none;

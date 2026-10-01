@@ -527,8 +527,8 @@ function buildPanel(p, col){
     }
     const txt = p[s.k+'_issue']||'';
     const pics = photosOf(p.id, s.k);
-    const thumbs = pics.length ? `<div class="scol-atts">${pics.map(a=>attachHtml(a,'sm')).join('')}</div>` : '';
-    return `<div class="scol${skip?' skip':''}" id="sc-${p.id}-${s.k}">
+    const thumbs = pics.length ? `<div class="scol-atts">${pics.map(a=>`<span class="att-wrap">${attachHtml(a,'sm')}<button class="att-del" data-a="delpic" data-id="${a.id}" title="첨부 삭제">&times;</button></span>`).join('')}</div>` : '';
+    return `<div class="scol${skip?' skip':''}" id="sc-${p.id}-${s.k}" data-drop="proj" data-dropid="${p.id}" data-dropstage="${s.k}">
       <div class="scol-head">
         <div class="scol-top">
           <span class="scol-name" style="background:${s.c};">${s.n}</span>
@@ -586,7 +586,7 @@ function buildPanel(p, col){
     <div class="sec-title">단계별 일정 · 이슈 · 품질 이력</div>
     <div class="stage-cols">${cols}</div>
     <div class="sec-title">사진 / 첨부 (단계 미지정)</div>
-    <div class="photo-grid">${photoHtml}</div>
+    <div class="photo-grid" data-drop="proj" data-dropid="${p.id}">${photoHtml}</div>
     <div style="height:14px"></div>`;
   return el;
 }
@@ -678,8 +678,10 @@ function renderTodos(){
     const dd=t.due_date?daysUntil(toDate(t.due_date)):null;
     const over=dd!==null&&dd<0&&!t.done;
     const atts=attachments.filter(a=>a.todo_id===t.id);
-    const rm=atts.map(a=>attachHtml(a,'sm')).join('');
-    rows+=`<tr class="trow${t.done?' done':''}" data-id="${t.id}">
+    const rm=atts.map(a=>`<span class="att-wrap">${attachHtml(a,'sm')
+      }<button class="att-del" data-a="delpic" data-id="${a.id}" title="첨부 삭제">✕</button></span>`).join('');
+    rows+=`<tr class="trow${t.done?' done':''}" data-id="${t.id}"
+        data-drop="todo" data-dropid="${t.id}" data-dropname="${attr(t.title||t.content||'이 이슈')}">
       <td class="c-no">${idx+1}</td>
       <td class="c-check"><button class="todo-check${t.done?' on':''}" data-a="toggle">${t.done?'✓':''}</button></td>
       <td class="c-title" data-a="tedit" data-f="title">${esc(t.title||t.content||'')}</td>
@@ -695,8 +697,9 @@ function renderTodos(){
         <option value="low" ${t.priority==='low'?'selected':''}>낮음</option></select></td>
       <td class="c-remark"><div class="remark-atts">${rm}</div>
         <button class="btn-xs" data-a="tattach">+ 첨부</button>
-        <button class="btn-xs" data-a="tlink">+ 링크</button></td>
-      <td class="c-del"><button class="todo-del" data-a="tdel">✕</button></td></tr>`;
+        <button class="btn-xs" data-a="tlink">+ 링크</button>
+        <div class="drop-hint">끌어넣거나 Ctrl+V</div></td>
+      <td class="c-del"><button class="todo-del" data-a="tdel" title="이슈 행 전체 삭제">✕</button></td></tr>`;
   });
   wrap.innerHTML=`<table class="todo-table">
     <thead><tr><th>No.</th><th>완료</th><th>Title</th><th>Action Plan</th><th>Due date</th>
@@ -827,7 +830,7 @@ function openModal(title, fieldsHtml, cb, lg){
   modalSnap=snapFields();
   $('modalOverlay').classList.add('on');
 }
-function closeModal(){ $('modalOverlay').classList.remove('on'); modalCallback=null; modalSnap=null; }
+function closeModal(){ $('modalOverlay').classList.remove('on'); modalCallback=null; modalSnap=null; modalTodoId=null; }
 // 바깥 클릭 / ESC — 수정 중이면 먼저 물어본다
 function tryCloseModal(){
   if(modalDirty()){
@@ -911,39 +914,101 @@ function openNewModal(){
 }
 
 // ── 파일 업로드 ──
+// 파일 하나 업로드 (압축 → 용량확인 → Storage → attachments)
+async function uploadOne(file, pid, tid, stage, label){
+  const before=file.size;
+  file = await shrinkImage(file);
+  if(file.size>MAX_UPLOAD){
+    throw new Error(`"${file.name}" 이(가) 너무 큽니다 (${fmtSize(file.size)}).\n`
+      + `직접 올릴 수 있는 한도는 ${fmtSize(MAX_UPLOAD)} 입니다.\n\n`
+      + `사내 드라이브(OneDrive/SharePoint)에 올리신 뒤 "+ 링크" 로 주소를 등록하세요.`);
+  }
+  showLoading(`업로드 중...${label||''}` + (before!==file.size ? `  (${fmtSize(before)} → ${fmtSize(file.size)})` : ''));
+  const ext=(file.name.split('.').pop()||'bin');
+  const folder = pid?`proj_${pid}`:`todo_${tid}`;
+  const path=`${folder}/${Date.now()}_${Math.random().toString(36).slice(2,7)}.${ext}`;
+  const up=await sb.storage.from('photos').upload(path,file);
+  if(up.error) throw up.error;
+  const { data:url } = sb.storage.from('photos').getPublicUrl(path);
+  const rec={ file_url:url.publicUrl, file_name:file.name };
+  if(pid) rec.project_id=pid;
+  if(tid) rec.todo_id=tid;
+  if(stage) rec.stage=stage;
+  const { data, error } = await sb.from('attachments').insert(rec).select();
+  if(error) throw error;
+  attachments.push(data[0]);
+}
+// 여러 개 한 번에
+async function uploadFiles(files, pid, tid, stage){
+  const list=[...files].filter(Boolean);
+  if(!list.length) return;
+  showLoading('업로드 중...');
+  let ok=0;
+  for(let i=0;i<list.length;i++){
+    try{ await uploadOne(list[i], pid, tid, stage, list.length>1?` (${i+1}/${list.length})`:''); ok++; }
+    catch(e){ hideLoading(); alert(e.message||e); break; }
+  }
+  hideLoading();
+  if(ok) renderAll();
+}
 function addFile(pid, tid, stage){
-  const inp=document.createElement('input'); inp.type='file';
-  inp.onchange=async()=>{
-    let file=inp.files[0]; if(!file) return;
-    showLoading('업로드 중...');
-    try{
-      const before=file.size;
-      file = await shrinkImage(file);
-      if(file.size>MAX_UPLOAD){
-        hideLoading();
-        alert(`파일이 너무 큽니다 (${fmtSize(file.size)}).\n`
-            + `직접 올릴 수 있는 한도는 ${fmtSize(MAX_UPLOAD)} 입니다.\n\n`
-            + `사내 드라이브(OneDrive/SharePoint)에 올리신 뒤\n"+ 링크" 버튼으로 주소를 등록하세요.`);
-        return;
-      }
-      if(before!==file.size) showLoading(`업로드 중... (${fmtSize(before)} → ${fmtSize(file.size)} 압축)`);
-      const ext=(file.name.split('.').pop()||'bin');
-      const folder = pid?`proj_${pid}`:`todo_${tid}`;
-      const path=`${folder}/${Date.now()}.${ext}`;
-      const up=await sb.storage.from('photos').upload(path,file);
-      if(up.error) throw up.error;
-      const { data:url } = sb.storage.from('photos').getPublicUrl(path);
-      const rec={ file_url:url.publicUrl, file_name:file.name };
-      if(pid) rec.project_id=pid;
-      if(tid) rec.todo_id=tid;
-      if(stage) rec.stage=stage;
-      const { data, error } = await sb.from('attachments').insert(rec).select();
-      if(error) throw error;
-      attachments.push(data[0]);
-      hideLoading(); renderAll();
-    }catch(e){ hideLoading(); alert('업로드 실패: '+(e.message||e)); }
-  };
+  const inp=document.createElement('input'); inp.type='file'; inp.multiple=true;
+  inp.onchange=()=>uploadFiles(inp.files, pid, tid, stage);
   inp.click();
+}
+
+// ════ 끌어넣기 / 붙여넣기 ════
+// 드롭 대상: [data-drop="todo|proj"] [data-dropid] [data-dropstage]
+let hoverDrop=null;          // 마우스가 올라가 있는 드롭 대상
+let modalTodoId=null;        // 편집창이 열려 있는 이슈
+function dropCtxOf(el){
+  const t = el && el.closest ? el.closest('[data-drop]') : null;
+  if(!t) return null;
+  const id=Number(t.dataset.dropid);
+  return t.dataset.drop==='todo'
+    ? { tid:id, el:t, name:t.dataset.dropname||'이 이슈' }
+    : { pid:id, stage:t.dataset.dropstage||null, el:t, name:t.dataset.dropname||'이 부품' };
+}
+function pasteName(type){
+  const d=new Date(), p=n=>String(n).padStart(2,'0');
+  const ext=(type||'image/png').split('/')[1].replace('jpeg','jpg');
+  return `붙여넣기_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`;
+}
+function initDropPaste(){
+  document.addEventListener('mouseover', e=>{
+    const c=dropCtxOf(e.target);
+    if(c) hoverDrop=c;
+  });
+  // 브라우저가 파일을 열어버리지 않도록 전역에서 막는다
+  document.addEventListener('dragover', e=>{
+    if(!e.dataTransfer || ![...e.dataTransfer.types].includes('Files')) return;
+    e.preventDefault();
+    const c=dropCtxOf(e.target);
+    document.querySelectorAll('.drop-on').forEach(x=>x.classList.remove('drop-on'));
+    if(c) c.el.classList.add('drop-on');
+  });
+  document.addEventListener('dragleave', e=>{
+    if(e.relatedTarget) return;
+    document.querySelectorAll('.drop-on').forEach(x=>x.classList.remove('drop-on'));
+  });
+  document.addEventListener('drop', e=>{
+    if(!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+    e.preventDefault();
+    document.querySelectorAll('.drop-on').forEach(x=>x.classList.remove('drop-on'));
+    const c=dropCtxOf(e.target);
+    if(!c){ alert('이슈 행 위나 단계 카드 위에 놓아주세요.'); return; }
+    uploadFiles(e.dataTransfer.files, c.pid||null, c.tid||null, c.stage||null);
+  });
+  // 붙여넣기 — 편집창이 열려 있으면 그 이슈로, 아니면 마우스가 올라가 있는 곳으로
+  document.addEventListener('paste', e=>{
+    const files=e.clipboardData && e.clipboardData.files;
+    if(!files || !files.length) return;        // 글자 붙여넣기는 그대로 둔다
+    const c = modalTodoId ? { tid:modalTodoId } : hoverDrop;
+    if(!c){ alert('붙여넣을 위치에 마우스를 올린 뒤 Ctrl+V 하세요.\n(이슈 행 또는 단계 카드)'); return; }
+    e.preventDefault();
+    const list=[...files].map(f=>f.name && f.name!=='image.png' ? f : new File([f], pasteName(f.type), { type:f.type }));
+    uploadFiles(list, c.pid||null, c.tid||null, c.stage||null);
+  });
 }
 // ── 외부 링크 첨부 (OneDrive / SharePoint / Google Drive …) ──
 function addLink(pid, tid, stage){
@@ -990,7 +1055,9 @@ function attachHtml(a, size){
     : `<a href="${url}" target="_blank" rel="noopener" class="file-chip"><i class="ti ti-file"></i><span>${nm}</span></a>`;
 }
 async function deleteAttachment(id){
-  if(!confirm('삭제하시겠습니까?')) return;
+  const a=attachments.find(x=>x.id===id);
+  const what=a ? (isExternal(a)?'링크':'첨부파일')+` "${a.file_name||''}"` : '첨부';
+  if(!confirm(`${what} 를 삭제할까요?\n\n(이슈 내용은 지워지지 않습니다)`)) return;
   showLoading('삭제 중...');
   const { error } = await sb.from('attachments').delete().eq('id', id);
   hideLoading();
@@ -1016,20 +1083,24 @@ async function updateTodo(id,patch){
 }
 async function toggleTodo(id){ const t=todos.find(x=>x.id===id); await updateTodo(id,{ done:!t.done }); }
 async function deleteTodo(id){
-  if(!confirm("삭제하시겠습니까?")) return;
+  const t=todos.find(x=>x.id===id);
+  const n=attachments.filter(a=>a.todo_id===id).length;
+  if(!confirm(`이슈 "${(t&&(t.title||t.content))||''}" 를 통째로 삭제합니다.\n`
+            + `Action Plan 과 첨부${n?` ${n}건`:''}도 함께 사라집니다.\n\n정말 삭제할까요?`)) return;
   const { error } = await sb.from("todos").delete().eq('id', id);
   if(error){ alert(error.message); return; }
   todos=todos.filter(x=>x.id!==id); renderTodos();
 }
 function openTodoEdit(id, field){
   const t=todos.find(x=>x.id===id); if(!t) return;
+  modalTodoId=id;        // 편집창이 열려 있는 동안 Ctrl+V 는 이 이슈로 첨부
   const labels={ title:'Title', action_plan:'Action Plan', due_date:'Due date (YYYY-MM-DD)', resp:'책임자(Resp.)' };
   let val=t[field]||'';
   if(field==='due_date') val=clean(val);
   const multi = field==='action_plan';
   openModal(labels[field]+' 수정',
     multi ? `<div class="modal-field"><textarea class="modal-input" id="tv" style="line-height:1.85;font-size:13.5px;">${esc(val)}</textarea></div>
-             <div class="resize-hint">창 오른쪽 아래 모서리를 끌면 크기를 바꿀 수 있고, 그 크기가 기억됩니다</div>`
+             <div class="resize-hint">Ctrl+V 로 사진을 바로 첨부할 수 있습니다 · 모서리를 끌면 창 크기가 바뀌고 기억됩니다</div>`
           : `<input class="modal-input" id="tv" value="${attr(val)}" ${field==='due_date'?'placeholder="YYYY-MM-DD"':''}>`,
     async()=>{
       let v=$('tv').value;
@@ -1135,6 +1206,7 @@ function init(){
   });
 
   document.body.addEventListener('click', onBodyClick);
+  initDropPaste();
   document.addEventListener('keydown', e=>{
     if(e.key!=='Escape') return;
     if($('viewer').classList.contains('on')){ $('viewer').classList.remove('on'); return; }
