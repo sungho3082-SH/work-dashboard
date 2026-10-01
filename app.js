@@ -93,14 +93,6 @@ async function shrinkImage(file){
     return new File([blob], file.name.replace(/\.[^.]+$/,'')+'.jpg', { type:'image/jpeg' });
   }catch(e){ console.warn('이미지 압축 실패, 원본 업로드', e); return file; }
 }
-function promptDate(){
-  const t=new Date(), def=String(t.getMonth()+1).padStart(2,'0')+'/'+String(t.getDate()).padStart(2,'0');
-  const v=prompt('날짜 입력 (MM/DD)', def);
-  if(v===null) return null;
-  const m=v.trim().match(/^(\d{1,2})\/(\d{1,2})$/);
-  if(!m){ alert('MM/DD 형식으로 입력하세요. 예: 07/21'); return null; }
-  return '('+m[1].padStart(2,'0')+'/'+m[2].padStart(2,'0')+')';
-}
 function askDate(label, cur){
   const v = prompt(label+'\nYYYY-MM-DD 형식. 비우면 삭제(생략 처리)', cur||'');
   if(v===null) return undefined;                 // 취소
@@ -551,7 +543,6 @@ function buildPanel(p, col){
         <textarea class="scol-ta" id="ta-${p.id}-${s.k}" readonly placeholder="${skip?'생략 단계':'기록 없음'}">${esc(txt)}</textarea>
       </div>
       <div class="scol-foot" id="ft-${p.id}-${s.k}">
-        <button class="btn-xs" data-a="adddate" data-p="${p.id}" data-k="${s.k}">+날짜</button>
         <button class="btn-xs" data-a="big" data-p="${p.id}" data-k="${s.k}" title="크게 보기"><i class="ti ti-arrows-diagonal"></i></button>
         <button class="btn-xs" data-a="pic" data-p="${p.id}" data-k="${s.k}" title="사진/파일"><i class="ti ti-paperclip"></i></button>
         <button class="btn-xs" data-a="link" data-p="${p.id}" data-k="${s.k}" title="링크 첨부"><i class="ti ti-link"></i></button>
@@ -680,7 +671,7 @@ function renderTodos(){
   let items=todos;
   if(todoFilter==='active') items=todos.filter(t=>!t.done);
   else if(todoFilter==='done') items=todos.filter(t=>t.done);
-  if(!items.length){ wrap.innerHTML='<div class="empty">할 일이 없습니다. 위에서 추가하세요.</div>'; return; }
+  if(!items.length){ wrap.innerHTML='<div class="empty">등록된 이슈가 없습니다. 위에서 추가하세요.</div>'; return; }
 
   let rows='';
   items.forEach((t,idx)=>{
@@ -693,8 +684,7 @@ function renderTodos(){
       <td class="c-check"><button class="todo-check${t.done?' on':''}" data-a="toggle">${t.done?'✓':''}</button></td>
       <td class="c-title" data-a="tedit" data-f="title">${esc(t.title||t.content||'')}</td>
       <td class="c-action"><div class="action-box" data-a="tedit" data-f="action_plan">${
-        esc(t.action_plan||'').replace(/\n/g,'<br>')||'<span class="ph">클릭하여 입력</span>'}</div>
-        <button class="btn-xs" style="margin-top:4px;" data-a="tplandate">+날짜</button></td>
+        esc(t.action_plan||'').replace(/\n/g,'<br>')||'<span class="ph">클릭하여 입력</span>'}</div></td>
       <td class="c-due" data-a="tedit" data-f="due_date"><span class="${over?'due-over':''}">${
         t.due_date?clean(t.due_date):'<span class="ph">-</span>'}</span>${
         dd!==null&&!t.done&&t.due_date?`<div class="due-dday ${over?'over':''}">D${dd>=0?'-'+dd:'+'+(-dd)}</div>`:''}</td>
@@ -778,14 +768,6 @@ function cancelIssue(pid,k){
   if(ta) ta.value=issDraft[pid+'-'+k]||'';
   renderAll();
 }
-// +날짜: 편집 모드로 들어가서 (MM/DD) 삽입
-function addDateMark(pid,k){
-  const d=promptDate(); if(!d) return;
-  startEdit(pid,k);
-  const ta=$(`ta-${pid}-${k}`); if(!ta) return;
-  ta.value=(ta.value?ta.value.replace(/\s*$/,'')+'\n\n':'')+d+'\n';
-  ta.focus(); ta.selectionStart=ta.selectionEnd=ta.value.length; ta.scrollTop=ta.scrollHeight;
-}
 // 확대 편집
 function openBig(pid,k){
   const p=projects.find(x=>x.id===pid); if(!p) return;
@@ -794,6 +776,8 @@ function openBig(pid,k){
   $('bigStage').textContent=s.n; $('bigStage').style.background=s.c;
   $('bigWho').textContent=`${p.car_model} · ${p.part_name||''}`;
   $('bigTa').value=p[k+'_issue']||'';
+  bigSnap=$('bigTa').value;
+  loadSize($('bigBox'),'big');
   $('bigOverlay').classList.add('on');
   setTimeout(()=>$('bigTa').focus(),60);
 }
@@ -801,7 +785,7 @@ async function saveBig(){
   if(!bigCtx) return;
   const { pid,k } = bigCtx;
   if(await updateProject(pid, { [k+'_issue']:$('bigTa').value })){
-    $('bigOverlay').classList.remove('on'); bigCtx=null; renderAll();
+    bigSnap=$('bigTa').value; closeBig(true); renderAll();
   }
 }
 async function deleteProject(pid){
@@ -817,13 +801,56 @@ async function deleteProject(pid){
 }
 
 // ── 모달 ──
-function openModal(title, fieldsHtml, cb){
+// 사용자가 바꾼 창 크기를 기억했다가 다시 열 때 복원
+function loadSize(el, key){
+  el.style.width=''; el.style.height='';
+  try{
+    const s=JSON.parse(localStorage.getItem('size_'+key)||'null');
+    if(s && s.w>300 && s.h>200){ el.style.width=s.w+'px'; el.style.height=s.h+'px'; }
+  }catch(e){}
+}
+function saveSize(el, key){
+  try{ localStorage.setItem('size_'+key, JSON.stringify({ w:el.offsetWidth, h:el.offsetHeight })); }catch(e){}
+}
+// 저장하지 않은 수정이 있는지 판별
+let modalSnap=null, bigSnap=null;
+function snapFields(){ return [...document.querySelectorAll('#modalFields input, #modalFields textarea')].map(e=>e.value).join('\u0001'); }
+function modalDirty(){ return modalSnap!==null && snapFields()!==modalSnap; }
+
+function openModal(title, fieldsHtml, cb, lg){
   $('modalTitle').textContent=title;
   $('modalFields').innerHTML=fieldsHtml;
+  const box=$('modalBox');
+  box.classList.toggle('lg', !!lg);
+  loadSize(box, lg?'modal_lg':'modal');
   modalCallback=cb;
+  modalSnap=snapFields();
   $('modalOverlay').classList.add('on');
 }
-function closeModal(){ $('modalOverlay').classList.remove('on'); modalCallback=null; }
+function closeModal(){ $('modalOverlay').classList.remove('on'); modalCallback=null; modalSnap=null; }
+// 바깥 클릭 / ESC — 수정 중이면 먼저 물어본다
+function tryCloseModal(){
+  if(modalDirty()){
+    if(confirm('저장하지 않은 수정이 있습니다.\n\n[확인] 저장하고 닫기\n[취소] 계속 편집')){
+      if(modalCallback) modalCallback();
+    }
+    return;
+  }
+  closeModal();
+}
+// 취소 버튼 — 수정 중이면 버릴지 확인
+function cancelModal(){
+  if(modalDirty() && !confirm('수정한 내용을 버리고 닫을까요?')) return;
+  closeModal();
+}
+// 확대 편집창 닫기
+function closeBig(force){
+  if(!force && bigSnap!==null && $('bigTa').value!==bigSnap){
+    if(confirm('저장하지 않은 수정이 있습니다.\n\n[확인] 저장하고 닫기\n[취소] 계속 편집')) saveBig();
+    return;
+  }
+  $('bigOverlay').classList.remove('on'); bigCtx=null; bigSnap=null;
+}
 function fieldHtml(k,label,val,ph){
   return `<div class="modal-field"><label class="modal-label">${label}</label>
     <input class="modal-input" data-k="${k}" value="${attr(val||'')}" ${ph?`placeholder="${attr(ph)}"`:''}></div>`;
@@ -989,20 +1016,20 @@ async function updateTodo(id,patch){
 }
 async function toggleTodo(id){ const t=todos.find(x=>x.id===id); await updateTodo(id,{ done:!t.done }); }
 async function deleteTodo(id){
-  if(!confirm('삭제하시겠습니까?')) return;
-  const { error } = await sb.from('todos').delete().eq('id', id);
+  if(!confirm("삭제하시겠습니까?")) return;
+  const { error } = await sb.from("todos").delete().eq('id', id);
   if(error){ alert(error.message); return; }
   todos=todos.filter(x=>x.id!==id); renderTodos();
 }
-function openTodoEdit(id, field, withDate){
+function openTodoEdit(id, field){
   const t=todos.find(x=>x.id===id); if(!t) return;
   const labels={ title:'Title', action_plan:'Action Plan', due_date:'Due date (YYYY-MM-DD)', resp:'책임자(Resp.)' };
   let val=t[field]||'';
   if(field==='due_date') val=clean(val);
-  if(withDate){ const d=promptDate(); if(!d) return; val=(val?val.replace(/\s*$/,'')+'\n\n':'')+d+'\n'; }
   const multi = field==='action_plan';
   openModal(labels[field]+' 수정',
-    multi ? `<textarea class="modal-input" id="tv" style="min-height:260px;font-size:13px;">${esc(val)}</textarea>`
+    multi ? `<div class="modal-field"><textarea class="modal-input" id="tv" style="line-height:1.85;font-size:13.5px;">${esc(val)}</textarea></div>
+             <div class="resize-hint">창 오른쪽 아래 모서리를 끌면 크기를 바꿀 수 있고, 그 크기가 기억됩니다</div>`
           : `<input class="modal-input" id="tv" value="${attr(val)}" ${field==='due_date'?'placeholder="YYYY-MM-DD"':''}>`,
     async()=>{
       let v=$('tv').value;
@@ -1012,8 +1039,8 @@ function openTodoEdit(id, field, withDate){
         v=v||null;
       }
       await updateTodo(id,{ [field]:v }); closeModal();
-    });
-  setTimeout(()=>{ const el=$('tv'); if(el){ el.focus(); if(withDate) el.selectionStart=el.selectionEnd=el.value.length; } },70);
+    }, multi);
+  setTimeout(()=>{ const el=$('tv'); if(el) el.focus(); },70);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -1037,7 +1064,6 @@ function onBodyClick(e){
   if(a==='edit'){ startEdit(pid,k); return; }
   if(a==='save'){ saveIssue(pid,k); return; }
   if(a==='cancel'){ cancelIssue(pid,k); return; }
-  if(a==='adddate'){ addDateMark(pid,k); return; }
   if(a==='big'){ openBig(pid,k); return; }
   if(a==='pic'){ addFile(pid,null,k||null); return; }
   if(a==='link'){ addLink(pid,null,k||null); return; }
@@ -1053,7 +1079,6 @@ function onBodyClick(e){
     if(a==='tdel'){ deleteTodo(tid); return; }
     if(a==='tattach'){ addFile(null,tid); return; }
     if(a==='tlink'){ addLink(null,tid); return; }
-    if(a==='tplandate'){ openTodoEdit(tid,'action_plan',true); return; }
     if(a==='tedit'){ openTodoEdit(tid, el.dataset.f, false); return; }
   }
 }
@@ -1078,17 +1103,20 @@ function init(){
   document.querySelectorAll('#nav a').forEach(a=>a.addEventListener('click',()=>switchView(a.dataset.v)));
   $('newBtn').addEventListener('click', openNewModal);
   $('modalSaveBtn').addEventListener('click', ()=>{ if(modalCallback) modalCallback(); });
-  $('modalCancelBtn').addEventListener('click', closeModal);
-  $('modalOverlay').addEventListener('click', e=>{ if(e.target===$('modalOverlay')) closeModal(); });
-  $('bigCancel').addEventListener('click', ()=>{ $('bigOverlay').classList.remove('on'); bigCtx=null; });
-  $('bigSave').addEventListener('click', saveBig);
-  $('bigAddDate').addEventListener('click', ()=>{
-    const d=promptDate(); if(!d) return;
-    const ta=$('bigTa');
-    ta.value=(ta.value?ta.value.replace(/\s*$/,'')+'\n\n':'')+d+'\n';
-    ta.focus(); ta.selectionStart=ta.selectionEnd=ta.value.length; ta.scrollTop=ta.scrollHeight;
+  $('modalCancelBtn').addEventListener('click', cancelModal);
+  $('modalOverlay').addEventListener('click', e=>{ if(e.target===$('modalOverlay')) tryCloseModal(); });
+  $('bigCancel').addEventListener('click', ()=>{
+    if(bigSnap!==null && $('bigTa').value!==bigSnap && !confirm('수정한 내용을 버리고 닫을까요?')) return;
+    closeBig(true);
   });
-  $('bigOverlay').addEventListener('click', e=>{ if(e.target===$('bigOverlay')){ $('bigOverlay').classList.remove('on'); bigCtx=null; } });
+  $('bigSave').addEventListener('click', saveBig);
+  $('bigOverlay').addEventListener('click', e=>{ if(e.target===$('bigOverlay')) closeBig(false); });
+  // 모달 크기를 바꾸면 기억해둔다
+  document.addEventListener('mouseup', ()=>{
+    const mb=$('modalBox'), bb=$('bigBox');
+    if($('modalOverlay').classList.contains('on')) saveSize(mb, mb.classList.contains('lg')?'modal_lg':'modal');
+    if($('bigOverlay').classList.contains('on')) saveSize(bb, 'big');
+  });
 
   $('bomSearch').addEventListener('input', renderBOM);
   $('bomExpand').addEventListener('click', ()=>{ const rows=bomRows(); bomExp={}; rows.forEach((r,i)=>{ if(bomHasChild(rows,i)) bomExp[i]=true; }); renderBOM(); });
@@ -1108,7 +1136,10 @@ function init(){
 
   document.body.addEventListener('click', onBodyClick);
   document.addEventListener('keydown', e=>{
-    if(e.key==='Escape'){ closeModal(); $('bigOverlay').classList.remove('on'); $('viewer').classList.remove('on'); }
+    if(e.key!=='Escape') return;
+    if($('viewer').classList.contains('on')){ $('viewer').classList.remove('on'); return; }
+    if($('bigOverlay').classList.contains('on')){ closeBig(false); return; }
+    if($('modalOverlay').classList.contains('on')) tryCloseModal();
   });
 
   loadAll().then(hideLoading, hideLoading);

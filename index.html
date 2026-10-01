@@ -364,9 +364,18 @@ table.bom{width:100%;border-collapse:collapse;}
 .overlay{position:fixed;inset:0;background:rgba(6,9,16,.78);z-index:150;display:none;
   align-items:center;justify-content:center;padding:24px;backdrop-filter:blur(3px);}
 .overlay.on{display:flex;}
-.modal{background:var(--card);border:1px solid var(--line);border-radius:14px;width:420px;max-width:100%;
-  max-height:88vh;overflow-y:auto;padding:22px;box-shadow:var(--shadow-h);}
-.modal.wide{width:820px;display:flex;flex-direction:column;max-height:88vh;}
+.modal{background:var(--card);border:1px solid var(--line);border-radius:14px;width:420px;
+  max-width:96vw;max-height:94vh;min-width:340px;min-height:220px;overflow:auto;padding:22px;
+  box-shadow:var(--shadow-h);display:flex;flex-direction:column;resize:both;}
+/* 글 쓰는 모달은 크게 + 드래그로 크기 조절 (크기는 기억됩니다) */
+.modal.lg{width:900px;height:74vh;}
+.modal.wide{width:1180px;height:82vh;}
+.modal .modal-title,.modal .modal-btns{flex-shrink:0;}
+.modal.lg #modalFields{flex:1;min-height:0;display:flex;flex-direction:column;}
+.modal.lg #modalFields .modal-field{flex:1;min-height:0;display:flex;flex-direction:column;}
+.modal.lg #modalFields textarea.modal-input,.modal.lg #modalFields #tv{flex:1;min-height:140px;}
+.modal::-webkit-resizer{background:var(--card2);}
+.resize-hint{font-size:10px;color:var(--dim);margin-top:6px;text-align:right;flex-shrink:0;}
 .modal-title{font-size:15px;font-weight:700;margin-bottom:15px;display:flex;align-items:center;gap:8px;}
 .modal-field{margin-bottom:11px;}
 .modal-label{display:block;font-size:11.5px;font-weight:650;color:var(--sub);margin-bottom:4px;}
@@ -417,7 +426,7 @@ textarea.modal-input{resize:vertical;line-height:1.75;}
     <a class="on" data-v="home">홈</a>
     <a data-v="timeline">타임라인</a>
     <a data-v="bom">BOM</a>
-    <a data-v="todo">To-Do</a>
+    <a data-v="todo">Open Issue List</a>
   </div>
   <div class="top-right">
     <div class="chip-s" id="connStatus"><div class="dot"></div><span id="connText">연결 확인 중...</span></div>
@@ -474,7 +483,7 @@ textarea.modal-input{resize:vertical;line-height:1.75;}
   <!-- ══════ To-Do ══════ -->
   <div class="view" id="view-todo">
     <div class="todo-add-row">
-      <input class="todo-input" id="todoInput" placeholder="새 할 일(Title)을 입력하고 Enter...">
+      <input class="todo-input" id="todoInput" placeholder="새 이슈 제목(Title)을 입력하고 Enter...">
       <button class="btn-primary" id="todoAddBtn" style="padding:10px 20px;font-size:13.5px;">추가</button>
     </div>
     <div class="filters">
@@ -501,11 +510,11 @@ textarea.modal-input{resize:vertical;line-height:1.75;}
 
 <!-- 단계 이슈 확대 모달 -->
 <div class="overlay" id="bigOverlay">
-  <div class="modal wide">
+  <div class="modal wide" id="bigBox">
     <div class="modal-title"><span class="scol-name" id="bigStage" style="background:#38bdf8;">Proto</span>
-      <span id="bigWho" style="font-size:13px;font-weight:600;"></span>
-      <button class="btn-xs" id="bigAddDate" style="margin-left:auto;">+ 날짜</button></div>
-    <textarea class="modal-input" id="bigTa" style="flex:1;min-height:52vh;font-size:13px;"></textarea>
+      <span id="bigWho" style="font-size:13px;font-weight:600;"></span></div>
+    <textarea class="modal-input" id="bigTa" style="flex:1;min-height:140px;font-size:13.5px;line-height:1.85;"></textarea>
+    <div class="resize-hint">창 오른쪽 아래 모서리를 끌면 크기를 바꿀 수 있고, 그 크기가 기억됩니다</div>
     <div class="modal-btns">
       <button class="btn-cancel" id="bigCancel">취소</button>
       <button class="btn-save" id="bigSave">저장</button>
