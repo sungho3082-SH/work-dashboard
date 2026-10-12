@@ -14,7 +14,7 @@ let curView = 'home';
 let tlSup = '전체', tlCar = '전체';
 let tlOpen = {};                   // 차종 펼침
 let selPid = null;                 // 선택된 부품(확장 패널)
-let bomCur = null, bomExp = {};
+let bomCur = null, bomExp = {}, bomSup = null;
 let todoFilter = 'all';
 let modalCallback = null;
 let bigCtx = null;                 // 확대 편집 중인 {pid,k}
@@ -624,60 +624,114 @@ function bomHL(s,q){
   if(i<0) return s;
   return s.slice(0,i)+'<span class="hl">'+s.slice(i,i+q.length)+'</span>'+s.slice(i+q.length);
 }
+// 협력사 목록 (건수 많은 순)
+function bomSuppliers(){
+  const m={};
+  boms.forEach(b=>{ const s=(b.supplier||'').trim(); if(s) m[s]=(m[s]||0)+1; });
+  return Object.keys(m).sort((a,b)=>m[b]-m[a]||a.localeCompare(b,'ko')).map(n=>({ name:n, cnt:m[n] }));
+}
+// 협력사 고르는 패널
+function renderSupPicker(){
+  const btn=$('bomSupBtn'), list=$('bomSupList');
+  $('bomSupLabel').textContent = bomSup || '전체';
+  btn.classList.toggle('on', !!bomSup);
+  const q=($('bomSupFind').value||'').trim().toLowerCase();
+  const all=bomSuppliers().filter(s=>!q || s.name.toLowerCase().includes(q));
+  let h=`<div class="sup-opt${bomSup?'':' on'}" data-sup=""><span class="n">전체</span><span class="c">${boms.length}</span></div>`;
+  if(!all.length) h+='<div class="sup-empty">그런 이름의 업체가 없습니다</div>';
+  all.forEach(s=>{
+    h+=`<div class="sup-opt${bomSup===s.name?' on':''}" data-sup="${attr(s.name)}">
+          <span class="n">${bomHL(s.name,q)}</span><span class="c">${s.cnt}</span></div>`;
+  });
+  list.innerHTML=h;
+}
 function renderBOM(){
+  // ── 차종 칩 (전체 포함) ──
   const chips=$('bomChips'); chips.innerHTML='';
   const cars=[...new Set(boms.map(b=>b.car_model))];
-  cars.forEach(k=>{
+  [{k:'전체',n:boms.length}, ...cars.map(k=>({k, n:boms.filter(b=>b.car_model===k).length}))].forEach(({k,n})=>{
     const c=document.createElement('div');
     c.className='chip'+(k===bomCur?' on':'');
-    c.innerHTML=`${esc(k)}<span class="c">${boms.filter(b=>b.car_model===k).length}</span>`;
-    c.onclick=()=>{ bomCur=k; bomExp={}; $('bomSearch').value=''; renderBOM(); };
+    c.innerHTML=`${esc(k)}<span class="c">${n}</span>`;
+    c.onclick=()=>{ bomCur=k; bomExp={}; renderBOM(); };
     chips.appendChild(c);
   });
+  renderSupPicker();
 
   const panel=$('bomPanel');
   if(!hasBom){ panel.innerHTML='<div class="empty">bom 테이블이 없습니다. <code>migration.sql</code> 을 먼저 실행해 주세요.</div>'; $('bomCnt').innerHTML=''; return; }
   if(!boms.length){ panel.innerHTML='<div class="empty">BOM 데이터가 없습니다.</div>'; $('bomCnt').innerHTML=''; return; }
 
-  const rows=bomRows();
   const q=($('bomSearch').value||'').trim();
-  $('bomCnt').innerHTML=`총 <b>${rows.length}</b>개`;
+  const ql=q.toLowerCase();
+  // 협력사를 골랐거나 / 검색어가 있거나 / 차종이 전체면 → 트리 대신 평면 목록
+  const flat = !!bomSup || !!q || bomCur==='전체';
 
-  let visible;
-  if(q){
-    const ql=q.toLowerCase(), show=new Set();
-    rows.forEach((r,i)=>{
-      if((r.part_no&&r.part_no.toLowerCase().includes(ql))||(r.part_name&&r.part_name.toLowerCase().includes(ql))){
-        show.add(i);
-        let lvl=r.level;
-        for(let j=i-1;j>=0&&lvl>1;j--){ if(rows[j].level<lvl){ show.add(j); lvl=rows[j].level; } }
-      }
+  const inCar = b => bomCur==='전체' || b.car_model===bomCur;
+  const hit   = b => !q || [b.part_no,b.part_name,b.supplier,b.plant,b.remark]
+                            .some(v=>v && String(v).toLowerCase().includes(ql));
+
+  // ── 평면 목록 : 차종별로 묶어서 보여준다 ──
+  if(flat){
+    const rows=boms.filter(b=>inCar(b) && (!bomSup || (b.supplier||'').trim()===bomSup) && hit(b));
+    const carsIn=[...new Set(rows.map(r=>r.car_model))];
+    $('bomCnt').innerHTML = bomSup
+      ? `<b>${esc(bomSup)}</b> · ${carsIn.length}개 차종 · <b>${rows.length}</b>개 품목`
+      : `<b>${rows.length}</b>개 품목 · ${carsIn.length}개 차종`;
+    if(!rows.length){ panel.innerHTML='<div class="empty">조건에 맞는 품목이 없습니다.</div>'; return; }
+
+    let body='';
+    carsIn.forEach(cm=>{
+      const sub=rows.filter(r=>r.car_model===cm).sort((a,b)=>(a.sort_order||0)-(b.sort_order||0));
+      body+=`<tr class="carhead"><td colspan="8">${esc(cm)} · ${sub.length}개</td></tr>`;
+      sub.forEach(r=>{
+        const nc = r.nc==='New' ? '<span class="badge b-new">New</span>' : (r.nc?'<span class="badge b-cov">C/over</span>':'');
+        const mb = r.mb==='Make' ? '<span class="badge b-make">Make</span>' : (r.mb==='Buy'?'<span class="badge b-buy">Buy</span>':'');
+        body+=`<tr>
+          <td class="bcar">${esc(r.car_model)}</td>
+          <td class="bpno">${bomHL(r.part_no,q)}</td>
+          <td><span class="bname">${bomHL(r.part_name,q)}${
+            r.variant?` <span class="tw">· ${esc(r.variant)}</span>`:''}</span></td>
+          <td>${nc}</td><td>${mb}</td>
+          <td class="dim">${esc(r.plant||'')}</td>
+          <td>${bomHL(r.supplier||'',q)}</td>
+          <td class="dim">${esc(r.remark||'')}</td></tr>`;
+      });
     });
-    visible=[...show].sort((a,b)=>a-b);
-    if(!visible.length){ panel.innerHTML='<div class="empty">검색 결과가 없습니다.</div>'; return; }
-  } else {
-    visible=[]; let hideAbove=Infinity;
-    rows.forEach((r,i)=>{
-      if(r.level>hideAbove) return;
-      hideAbove=Infinity;
-      if(bomHasChild(rows,i)&&!bomExp[i]) hideAbove=r.level;
-      visible.push(i);
-    });
+    panel.innerHTML=`<table class="bom">
+      <thead><tr><th style="width:84px">차종</th><th style="width:132px">Part No.</th><th>Part Name</th>
+        <th style="width:62px">구분</th><th style="width:58px">M/B</th><th style="width:86px">공장</th>
+        <th style="width:120px">협력사</th><th style="width:92px">비고</th></tr></thead>
+      <tbody>${body}</tbody></table>`;
+    return;
   }
+
+  // ── 트리 : 한 차종을 고르고 검색어가 없을 때 ──
+  const rows=bomRows();
+  $('bomCnt').innerHTML=`총 <b>${rows.length}</b>개`;
+  let visible=[], hideAbove=Infinity;
+  rows.forEach((r,i)=>{
+    if(r.level>hideAbove) return;
+    hideAbove=Infinity;
+    if(bomHasChild(rows,i)&&!bomExp[i]) hideAbove=r.level;
+    visible.push(i);
+  });
 
   let body='';
   visible.forEach(i=>{
     const r=rows[i], kid=bomHasChild(rows,i), open=!!bomExp[i];
     const indent=(r.level-1)*16;
-    const tog=(!q&&kid)?`<span class="tog" data-a="bomtog" data-i="${i}">${open?'−':'+'}</span>`:'<span class="tog leaf"></span>';
+    const tog=kid?`<span class="tog" data-a="bomtog" data-i="${i}">${open?'−':'+'}</span>`:'<span class="tog leaf"></span>';
     const nc = r.nc==='New' ? '<span class="badge b-new">New</span>' : (r.nc?'<span class="badge b-cov">C/over</span>':'');
     const mb = r.mb==='Make' ? '<span class="badge b-make">Make</span>' : (r.mb==='Buy'?'<span class="badge b-buy">Buy</span>':'');
     body += `<tr class="${r.level===1?'lv1':''}">
-      <td class="bpno">${bomHL(r.part_no,q)}</td>
-      <td><div class="namecell" style="padding-left:${indent}px">${tog}<span class="bname">${bomHL(r.part_name,q)}${
+      <td class="bpno">${esc(r.part_no||'')}</td>
+      <td><div class="namecell" style="padding-left:${indent}px">${tog}<span class="bname">${esc(r.part_name||'')}${
         r.variant&&r.level===1?` <span class="tw">· ${esc(r.variant)}</span>`:''}</span></div></td>
       <td>${nc}</td><td>${mb}</td>
-      <td class="dim">${esc(r.plant||'')}</td><td>${esc(r.supplier||'')}</td><td class="dim">${esc(r.remark||'')}</td></tr>`;
+      <td class="dim">${esc(r.plant||'')}</td>
+      <td class="sup-cell" data-a="bomsup" data-sup="${attr((r.supplier||'').trim())}">${esc(r.supplier||'')}</td>
+      <td class="dim">${esc(r.remark||'')}</td></tr>`;
   });
   panel.innerHTML=`<table class="bom">
     <thead><tr><th style="width:132px">Part No.</th><th>Part Name</th><th style="width:62px">구분</th>
@@ -1202,6 +1256,11 @@ function onBodyClick(e){
 
   if(a==='view'){ viewImg(el.dataset.url); return; }
   if(a==='bomtog'){ const i=Number(el.dataset.i); bomExp[i]=!bomExp[i]; renderBOM(); return; }
+  // 표 안의 협력사 이름을 누르면 그 업체로 바로 묶어본다
+  if(a==='bomsup'){
+    const s=el.dataset.sup; if(!s) return;
+    bomSup=s; bomCur='전체'; $('bomSearch').value=''; renderBOM(); return;
+  }
   if(a==='sched'){ e.stopPropagation(); editSchedule(el.dataset.car, k); return; }
   if(a==='ck'){ editCk(pid, el.dataset.f); return; }
   if(a==='edit'){ startEdit(pid,k); return; }
@@ -1265,6 +1324,28 @@ function init(){
   });
 
   $('bomSearch').addEventListener('input', renderBOM);
+  // 협력사 고르기
+  $('bomSupBtn').addEventListener('click', e=>{
+    e.stopPropagation();
+    const p=$('bomSupPanel'); const open=p.classList.toggle('on');
+    if(open){ $('bomSupFind').value=''; renderSupPicker(); setTimeout(()=>$('bomSupFind').focus(),30); }
+  });
+  $('bomSupFind').addEventListener('input', renderSupPicker);
+  $('bomSupFind').addEventListener('keydown', e=>{
+    if(e.key==='Escape'){ $('bomSupPanel').classList.remove('on'); return; }
+    if(e.key!=='Enter') return;
+    const first=$('bomSupList').querySelector('.sup-opt[data-sup]:not([data-sup=""])');
+    if(first) first.click();
+  });
+  $('bomSupList').addEventListener('click', e=>{
+    const o=e.target.closest('.sup-opt'); if(!o) return;
+    bomSup = o.dataset.sup || null;
+    $('bomSupPanel').classList.remove('on');
+    renderBOM();
+  });
+  document.addEventListener('click', e=>{
+    if(!e.target.closest('.sup-picker')) $('bomSupPanel').classList.remove('on');
+  });
   $('bomExpand').addEventListener('click', ()=>{ const rows=bomRows(); bomExp={}; rows.forEach((r,i)=>{ if(bomHasChild(rows,i)) bomExp[i]=true; }); renderBOM(); });
   $('bomCollapse').addEventListener('click', ()=>{ bomExp={}; renderBOM(); });
 
