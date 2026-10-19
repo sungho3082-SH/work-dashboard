@@ -609,8 +609,6 @@ function renderMain(){
   order.forEach(cm=>{
     const parts=byCar[cm], col=getColor(cm), open=!gClosed[cm] || !!q;
     const dc=dateCls(cm), sc=schedOf(cm), cur=curStageOf(cm);
-    const sups=[...new Set(parts.map(p=>p.supplier_name).filter(Boolean))];
-    const pms=[...new Set(parts.map(p=>p.pm).filter(Boolean))];
     const cp=progOf(tCar(cm));
     const mcell = months.map((m,i)=>{
       const chips = STAGES.filter(s=>monIdx(sc.start[s.k],months)===i).map(s=>
@@ -618,10 +616,9 @@ function renderMain(){
       return `<td class="c-mon${i===nowI?' now':''}${m.m===0?' ystart':''}">${chips}</td>`;
     }).join('');
     h+=`<tr class="gcar${open?' open':''}" data-car="${attr(cm)}">
-      <td class="c-tog" data-tog="1" title="접기/펼치기"><span class="tri2">▶</span></td>
-      <td class="c-name" title="눌러서 고객사(ROA) 체크 항목 열기"><span class="cbar2" style="background:${col}"></span>${esc(cm)}<span class="cnt">${parts.length}개</span></td>
-      <td class="c-sup" title="${attr(sups.join(', '))}">${esc(sups.join(', '))}</td>
-      <td class="c-pm" style="cursor:default">${esc(pms.join(', '))}</td>
+      <td class="c-tog" title="접기/펼치기"><span class="tri2">▶</span></td>
+      <td class="c-name" title="눌러서 부품 목록 접기/펼치기"><span class="cbar2" style="background:${col}"></span>${esc(cm)}<span class="cnt">${parts.length}개</span></td>
+      <td class="c-sup" colspan="2"><button class="btn-cus" data-cus="${attr(cm)}" title="고객사 프로젝트(ROA) 진행 현황">📋 고객사 현황</button></td>
       <td class="c-step"><span class="tstep" style="background:${(STAGE_SOFT[cur.key]||STAGE_SOFT.none)[0]};color:${(STAGE_SOFT[cur.key]||STAGE_SOFT.none)[1]}">${esc(cur.label)}</span></td>
       ${STAGES.map(s=>`<td class="c-dt"><span class="dcell ${dc[s.k].cls}" ${dc[s.k].d!==undefined?`title="${dc[s.k].d<0?'지남':'D-'+dc[s.k].d}"`:''}>${dc[s.k].txt}</span></td>`).join('')}
       <td class="c-prog" title="고객사(ROA) 체크 진행률"><div class="oprog"><div class="bar"><i style="width:${cp.pct}%"></i></div>${cp.n?cp.pct+'%':'—'}</div></td>
@@ -643,7 +640,7 @@ function renderMain(){
       h+=`<tr class="gpart" data-p="${p.id}">
         <td class="c-tog"></td>
         <td class="c-name" title="${attr((p.part_name||'')+' '+(p.part_number||''))}"><span class="pn">${esc(p.part_name||'-')}</span><span class="pno2">${esc(p.part_number||'')}</span></td>
-        <td class="c-sup">${esc(p.supplier_name||'')}</td>
+        <td class="c-sup" title="눌러서 협력사 프로젝트(PQA) 진행 현황">${esc(p.supplier_name||'')}</td>
         <td class="c-pm" data-pm="${p.id}" title="눌러서 PM 지정">${p.pm?esc(p.pm):'<span class="ph">+</span>'}</td>
         <td class="c-step">${p.step?`<span class="tstep" style="background:${bg};color:${fg}">${esc(p.step)}</span>`:''}</td>
         ${STAGES.map(s=>`<td class="c-dt">${progCell(progOf(t,s.k), s.c)}</td>`).join('')}
@@ -656,7 +653,8 @@ function renderMain(){
 
   if(!gScrolled && nowI>=0){
     const th=box.querySelector('thead tr.r2 th.now');
-    if(th){ box.scrollLeft=Math.max(0, th.offsetLeft-box.clientWidth*0.55); gScrolled=true; }
+    // 이번 달이 화면 밖일 때만, 보일 만큼만 스크롤 (왼쪽 협력사·PM·Step 열은 남긴다)
+    if(th){ box.scrollLeft=Math.max(0, th.offsetLeft + th.offsetWidth*2 - box.clientWidth); gScrolled=true; }
   }
 }
 function onMainClick(e){
@@ -669,12 +667,12 @@ function onMainClick(e){
   }
   const pmTd=e.target.closest('td[data-pm]');
   if(pmTd){ editPm(Number(pmTd.dataset.pm)); return; }
+  const cus=e.target.closest('[data-cus]');
+  if(cus){ openPj(tCar(cus.dataset.cus)); return; }
   const car=e.target.closest('tr.gcar');
   if(car){
-    const cm=car.dataset.car;
-    if(e.target.closest('[data-tog]')){ gClosed[cm]=!gClosed[cm]; saveClosed(); renderMain(); return; }
     if(hasSelection()) return;
-    openPj(tCar(cm)); return;
+    const cm=car.dataset.car; gClosed[cm]=!gClosed[cm]; saveClosed(); renderMain(); return;
   }
   const part=e.target.closest('tr.gpart');
   if(part){ if(hasSelection()) return; openPj(tPart(Number(part.dataset.p))); }
@@ -692,7 +690,7 @@ function editPm(pid){
 // ════════════════════════════════════════════════════════════════
 //  상세 창 — 단계 도식 → 마일스톤별 체크 항목 → 짧은 설명 · Handbook 연결 · 결과 · 첨부
 // ════════════════════════════════════════════════════════════════
-const pj = { t:null, stage:null, no:null, showAll:false, fn:'', snap:null };
+const pj = { t:null, stage:null, no:null, showAll:false, fn:'', snap:null, recOpen:false };
 
 function openPj(t, stage){
   if(t.kind==='part' && !projects.find(x=>x.id===t.pid)) return;
@@ -847,6 +845,14 @@ function renderPj(){
     });
   });
   if(!vis.length) L+=`<div class="pjd-empty">이 단계에 켜진 항목이 없습니다.<br>위의 <b>전체 항목 보기</b>를 켜고 필요한 항목을 추가하세요.</div>`;
+  // 추천 Handbook — 이 단계에 해당하지만 아직 안 넣은 활동. "+ 넣기"로 이 트랙의 단계에 옮긴다
+  const track=trackOf(t);
+  const recs=QRM.acts.filter(a=>a.stages.includes(pj.stage) && !tplOn(track, { no:a.no, src:'hb' }, pj.stage));
+  if(recs.length){
+    L+=`<details class="hbrec"${pj.recOpen?' open':''}><summary>📖 추천 Handbook <b>${recs.length}</b><span>이 단계에 참고할 활동 · 필요한 것만 넣으세요</span></summary>
+      ${recs.map(a=>`<div class="recit"><span class="no">${a.no}</span><span class="tt" data-hb="${a.no}" title="Handbook에서 열기">${esc(tx(a,'title'))}</span>
+        <button class="btn-xs" data-hbadd="${a.no}" title="이 단계 체크 항목으로 넣기 (모든 ${isPart?'부품':'차종'}에 적용)">+ 넣기</button></div>`).join('')}</details>`;
+  }
   $('pjList').innerHTML=L;
 
   renderPjDetail();
@@ -993,6 +999,10 @@ function onPjClick(e){
   const lb=e.target.closest('[data-lang]'); if(lb){ setLang(lb.dataset.lang); return; }
   const hb=e.target.closest('[data-hb]'); if(hb){ openHb(Number(hb.dataset.hb)||null); return; }
   const tpb=e.target.closest('[data-tplopen]'); if(tpb){ openTpl(tpb.dataset.tplopen); return; }
+  const ha=e.target.closest('[data-hbadd]');
+  if(ha){ const no=Number(ha.dataset.hbadd); pj.recOpen=true;
+    setTpl(trackOf(pj.t), no, pj.stage, true, true).then(()=>{ pj.no=no; renderPj(); }); return; }
+  const rec=e.target.closest('details.hbrec > summary'); if(rec){ pj.recOpen=!e.target.closest('details').open; return; }
   const oc=e.target.closest('[data-opencar]');
   if(oc){ (async()=>{ if(!await pjLeave()) return; openPj(tCar(oc.dataset.opencar), pj.stage); })(); return; }
   const op=e.target.closest('[data-openpart]');

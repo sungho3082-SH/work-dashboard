@@ -37,9 +37,11 @@ Hanon Systems P&SD 부품 개발 일정 · 이슈 · BOM · To-Do 관리 대시�
 ## 체크 항목 (2트랙) + Handbook
 
 - **부품 행 → 협력사(PQA)**: SRM PQA 시나리오 마스터 리스트 기준. 부품마다 시나리오(비전자/PCBA/전자부품/멀티사이트/캐리오버)와
-  복잡도(High/Medium/Low/P0)를 고르면 필수(M) 항목이 자동으로 켜짐. 단계: Proto = SoCo·S-VRF · P1 = DESV · P2 = PROV · M = SISV · SOP = PQAG·양산 중
-- **차종 행 → 고객사(ROA)**: 개발절차의 마일스톤 체크리스트(CAAV~SSSR, 부문별 활동·산출물·판정 기준). 차종 단위로 한 번만 관리
-- 항목마다 짧은 설명 + 관련 **Handbook** 활동 링크. Handbook(QRM 4.0 rel 2.3, 49개)은 오른쪽 위 버튼으로 언제든 열람
+  복잡도(High/Medium/Low/P0)를 고르면 필수(M) 항목이 자동으로 켜짐.
+  단계: Proto = Sign S-VRF·Design Validation · P1 = Process Validation · P2 = IS Validation(ISIR 승인까지) · M = Probationary Period · SOP = 양산 중
+  (비전자 기준은 진성 Fastener / 신영 Stator·Flux 실제 PQA 진행 항목 반영)
+- **차종 행의 📋 고객사 현황 → 고객사(ROA)** (차종 행 자체를 누르면 부품 목록 접기/펼치기): 개발절차의 마일스톤 체크리스트(CAAV~SSSR, 부문별 활동·산출물·판정 기준). 차종 단위로 한 번만 관리
+- 항목마다 짧은 설명 + 관련 **Handbook** 활동 링크. 단계마다 아래쪽 **추천 Handbook** 에서 "+ 넣기"로 체크 항목에 옮길 수 있음. Handbook(QRM 4.0 rel 2.3, 49개)은 오른쪽 위 버튼으로 언제든 열람
 - 부품별 PQA 설정은 `project_tasks` 의 `act_no=0, stage='cfg'` 줄에 JSON 으로 보관
 - 원문은 `참고자료/` 폴더의 엑셀·PDF에서 추출합니다 (`.gitignore` 로 제외)
 
