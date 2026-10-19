@@ -149,3 +149,24 @@ create unique index if not exists project_tasks_car_uq
   on project_tasks (car_model, act_no, stage) where project_id is null;
 
 select 'project_tasks.car_model 준비됨' as result;
+
+-- ════════════════════════════════════════════════════════
+-- 추가 (2026-10-19 · 3) : 항목 설정 — 단계별로 어떤 항목을 넣을지 (직접 정리)
+-- 이미 실행했어도 다시 돌려도 안전합니다.
+-- 기본값과 다르게 바꾼 칸만 한 줄씩 저장합니다.
+-- ════════════════════════════════════════════════════════
+create table if not exists checklist_tpl (
+  id          bigserial primary key,
+  track       text not null,          -- sup (협력사) / cus (고객사)
+  item_no     int  not null,          -- PQA 1001~ / ROA 2001~ / Handbook 2~53
+  stage       text not null,          -- proto / p1 / p2 / m / sop
+  enabled     boolean not null,       -- true = 이 단계에 넣음, false = 뺌
+  updated_at  timestamptz default now(),
+  unique (track, item_no, stage)
+);
+alter table checklist_tpl enable row level security;
+drop policy if exists "checklist_tpl public" on checklist_tpl;
+create policy "checklist_tpl public" on checklist_tpl
+  for all to anon, authenticated using (true) with check (true);
+
+select 'checklist_tpl 준비됨' as result;

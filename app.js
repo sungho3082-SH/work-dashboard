@@ -322,9 +322,9 @@ async function loadAll(){
       return { ok:true, data:out };
     }catch(e){ return { ok:false, error:e }; }
   };
-  const [pr,sc,bm,td,at,pt] = await Promise.all([
+  const [pr,sc,bm,td,at,pt,tp] = await Promise.all([
     q('projects','sort_order'), q('car_schedules','sort_order'), q('bom','id'),
-    q('todos','sort_order'), q('attachments','created_at'), q('project_tasks','id')
+    q('todos','sort_order'), q('attachments','created_at'), q('project_tasks','id'), q('checklist_tpl','id')
   ]);
 
   if(!pr.ok){ setConn('err','불러오기 실패'); console.error(pr.error); alert('프로젝트 불러오기 실패: '+(pr.error.message||pr.error)); return; }
@@ -336,6 +336,7 @@ async function loadAll(){
   attachments = at.ok ? at.data : [];
   hasOpenDate = !todos.length || ('open_date' in todos[0]);
   hasTasks = pt.ok; ptasks = pt.ok ? pt.data : [];
+  hasTpl = tp.ok; setTplRows(tp.ok ? tp.data : []);
   hasPm = !projects.length || ('pm' in projects[0]);
 
   schedMap = {}; schedules.forEach(r=>{ schedMap[r.car_model]=r; });
@@ -349,6 +350,7 @@ async function loadAll(){
   if(!hasOpenDate) miss.push('todos.open_date 컬럼');
   if(!hasTasks) miss.push('project_tasks 테이블');
   if(!hasPm)    miss.push('projects.pm 컬럼');
+  if(!hasTpl)   miss.push('checklist_tpl 테이블 (항목 설정)');
   if(miss.length){ $('migWhat').textContent = miss.join(' / ')+' 없음'; $('migBanner').classList.add('on'); }
   else $('migBanner').classList.remove('on');
 
@@ -363,6 +365,8 @@ async function loadAll(){
   }
   const h=/^#hb=(\d+)/.exec(location.hash||'');
   if(h) openHb(Number(h[1]));
+  const ts=/^#tpl=(sup|cus)/.exec(location.hash||'');
+  if(ts) openTpl(ts[1]);
 }
 function renderAll(){
   renderMain(); renderHome(); renderTimeline(); renderBOM(); renderTodos();
@@ -462,7 +466,38 @@ function ymd2(d){ return d ? String(d.getFullYear()).slice(2)+'/'+String(d.getMo
 // 대상: 부품(협력사 PQA) 또는 차종(고객사 ROA)
 const tPart = pid => ({ kind:'part', pid });
 const tCar  = car => ({ kind:'car', car });
-function itemsOf(t){ return t.kind==='part' ? PQA.items : ROA.items; }
+// ── 항목 설정 (checklist_tpl) ──
+// 트랙(sup 협력사 / cus 고객사)마다 단계별로 어떤 항목을 넣을지. 기본값과 다르게 바꾼 칸만 저장된다.
+//   기본값: PQA·ROA 항목은 원래 단계에 들어가고, Handbook 활동은 아무 단계에도 없다.
+let tplRows = [], tplMap = new Map(), hasTpl = true, entCache = {};
+function tplKey(track, no, stage){ return track+'|'+no+'|'+stage; }
+function setTplRows(rows){
+  tplRows = rows; tplMap = new Map(rows.map(r=>[tplKey(r.track, r.item_no, r.stage), r])); entCache = {};
+}
+const trackOf = t => t.kind==='part' ? 'sup' : 'cus';
+function baseItems(track){ return track==='sup' ? PQA.items : ROA.items; }
+function tplDefault(track, x, stage){ return x.src!=='hb' && x.stage===stage; }
+function tplOn(track, x, stage){
+  const r=tplMap.get(tplKey(track, x.no, stage));
+  return r ? r.enabled : tplDefault(track, x, stage);
+}
+// Handbook 활동을 체크 항목 모양으로
+function hbEntry(a, stage){
+  return { no:a.no, stage, src:'hb', ms:'HB', fn:'HB', sc:null, hb:[a.no], cat:a.cat,
+           en:{ title:a.en.title, desc:[a.en.why, a.en.what].filter(Boolean).join('\n\n'), deliv:a.en.deliverable },
+           ko:{ title:a.ko.title, desc:[a.ko.why, a.ko.what].filter(Boolean).join('\n\n'), deliv:a.ko.deliverable } };
+}
+// 실제로 화면에 나오는 항목 (단계별 복사본 포함)
+function entries(track){
+  if(entCache[track]) return entCache[track];
+  const out=[];
+  baseItems(track).forEach(x=>STAGES.forEach(s=>{
+    if(tplOn(track, x, s.k)) out.push(x.stage===s.k ? x : Object.assign({}, x, { stage:s.k, moved:true }));
+  }));
+  QRM.acts.forEach(a=>STAGES.forEach(s=>{ if(tplOn(track, { no:a.no, src:'hb' }, s.k)) out.push(hbEntry(a, s.k)); }));
+  return (entCache[track]=out);
+}
+function itemsOf(t){ return entries(trackOf(t)); }
 function rowOf(t, no, stage){
   return t.kind==='part'
     ? ptasks.find(r=>r.project_id===t.pid && r.act_no===no && r.stage===stage)
@@ -474,7 +509,10 @@ function pqaCfg(pid){
   try{ const c=JSON.parse((r&&r.result)||'{}'); return { sc:c.sc||'NE', cx:Number.isInteger(c.cx)?c.cx:0, set:!!r }; }
   catch(e){ return { sc:'NE', cx:0, set:false }; }
 }
-function pqaCode(item, cfg){ const s=item.sc[cfg.sc]; return s ? s[cfg.cx] : '-'; }
+function pqaCode(item, cfg){
+  if(!item.sc) return 'M';                 // 직접 넣은 Handbook 항목은 필수로 본다
+  const s=item.sc[cfg.sc]; return s ? s[cfg.cx] : '-';
+}
 function inScope(t, item){ return t.kind==='car' || pqaCode(item, pqaCfg(t.pid))!=='-'; }
 function defaultOn(t, item){
   if(t.kind==='car') return true;
@@ -680,18 +718,26 @@ function setLang(l){
   qLang=l; try{ localStorage.setItem('qrm_lang',l); }catch(e){}
   if($('pjOverlay').classList.contains('on')) renderPj();
   if($('hbOverlay').classList.contains('on')) renderHb();
+  if($('tplOverlay').classList.contains('on')) renderTpl();
 }
 function langToggle(){
   return `<span class="lang-tog" title="설명 언어"><button data-lang="en" class="${qLang==='en'?'on':''}">EN</button><button data-lang="ko" class="${qLang==='ko'?'on':''}">한국어</button></span>`;
 }
 // 마일스톤 목록 (단계별)
+const HB_GROUP = { k:'HB', n:'Handbook', ko:'Handbook (직접 추가)', en_d:'Handbook activities added in item settings', ko_d:'항목 설정에서 이 단계에 넣은 Handbook 활동' };
 function msList(t, stage){
-  if(t.kind==='part') return PQA.ms.filter(m=>PQA.items.some(x=>x.ms===m.k && x.stage===stage));
-  return ROA.ms.filter(m=>m.stage===stage);
+  const ent=itemsOf(t).filter(x=>x.stage===stage);
+  const src = t.kind==='part' ? PQA.ms : ROA.ms;
+  const out = src.filter(m=>ent.some(x=>x.ms===m.k));
+  if(ent.some(x=>x.ms==='HB')) out.push(HB_GROUP);
+  return out;
 }
-function msLabel(t, m){ return t.kind==='part' ? (qLang==='ko'?m.ko:m.n) : m.k; }
+function msLabel(t, m){
+  if(m.k==='HB') return qLang==='ko' ? m.ko : m.n;
+  return t.kind==='part' ? (qLang==='ko'?m.ko:m.n) : m.k;
+}
 function msBrief(t, m){
-  if(t.kind==='part') return qLang==='ko' ? m.ko_d : m.en_d;
+  if(m.k==='HB' || t.kind==='part') return qLang==='ko' ? m.ko_d : m.en_d;
   return m.obj || m.expl || '';
 }
 
@@ -706,13 +752,14 @@ function renderPj(){
   const keepSnap = pj.snap;
 
   // ── 머리 ──
-  let head;
+  let head, partsRow='';
   if(isPart){
     const cfg=pqaCfg(p.id);
     head=`<div class="ep-badge" style="background:${col};">${esc(car)}</div>
       <div>
         <div><span class="trk sup">협력사 · PQA</span> <span class="ep-title">${esc(p.part_name||'-')}</span> <span class="ep-no">${esc(p.part_number||'')}</span></div>
-        <div class="ep-meta">${esc(p.supplier_name||'-')} · PM <b>${esc(p.pm||'-')}</b>${p.step?` · Step <b>${esc(p.step)}</b>`:''}</div>
+        <div class="ep-meta">${esc(p.supplier_name||'-')} · PM <b>${esc(p.pm||'-')}</b>${p.step?` · Step <b>${esc(p.step)}</b>`:''}
+          · <span class="jump" data-opencar="${attr(car)}" title="이 부품이 속한 고객사 프로젝트 현황">고객사 ${esc(car)} 현황 →</span></div>
       </div>
       <div class="cfgbox${cfg.set?'':' unset'}" title="PQA 시나리오와 복잡도에 따라 필수 항목이 정해집니다 (SRM PQA 시나리오 마스터 리스트)">
         <label>시나리오 <select id="pjSc">${PQA.scenarios.map(s=>`<option value="${s.k}" ${cfg.sc===s.k?'selected':''}>${esc(s[qLang])}</option>`).join('')}</select></label>
@@ -724,13 +771,16 @@ function renderPj(){
     head=`<div class="ep-badge" style="background:${col};">${esc(car)}</div>
       <div>
         <div><span class="trk cus">고객사 · ROA</span> <span class="ep-title">${esc(car)} 개발 마일스톤</span></div>
-        <div class="ep-meta">부품 ${parts.length}개 · ${esc([...new Set(parts.map(x=>x.supplier_name).filter(Boolean))].join(', ')||'-')}</div>
+        <div class="ep-meta">부품 ${parts.length}개 · 아래 칩을 누르면 그 협력사 프로젝트(PQA)로 이동</div>
       </div>`;
+    partsRow = `<div class="partsrow"><span class="lbl">협력사 현황</span>${parts.map(x=>{ const g=progOf(tPart(x.id));
+      return `<span class="pchip" data-openpart="${x.id}" title="${attr((x.part_number||'')+' · '+(x.part_name||''))}"><b>${esc(x.supplier_name||'-')}</b> ${esc(x.part_name||'-')} <i>${g.done}/${g.n}</i></span>`; }).join('')}</div>`;
   }
   $('pjHead').innerHTML = head + `<div class="x">${langToggle()}
+      <button class="btn-xs" data-tplopen="${isPart?'sup':'cus'}" title="이 트랙의 단계별 항목 구성 바꾸기"><i class="ti ti-adjustments"></i> 항목 설정</button>
       <button class="btn-xs" data-hb="0"><i class="ti ti-book"></i> Handbook</button>
       ${isPart?`<button class="btn-xs" data-a="editbasic" data-p="${p.id}"><i class="ti ti-pencil"></i> 기본정보</button>`:''}
-      <button class="btn-x" id="pjClose" title="닫기 (Esc)">✕</button></div>`;
+      <button class="btn-x" id="pjClose" title="닫기 (Esc)">✕</button></div>` + partsRow;
 
   // ── 단계 도식 ──
   const { nodes } = nodesOf(car);
@@ -766,7 +816,7 @@ function renderPj(){
   const all=itemsOf(t).filter(x=>x.stage===pj.stage && (isPart || !pj.fn || x.fn===pj.fn));
   const vis=all.filter(x=>pj.showAll || isOn(t,x));
   const hiddenN=all.length - all.filter(x=>isOn(t,x)).length;
-  if(pj.no && !vis.some(x=>x.no===pj.no)) pj.no=null;
+  if(pj.no && !vis.some(x=>x.no===pj.no)) pj.no=null;     // vis 는 이미 현재 단계만
   if(!pj.no && vis.length) pj.no=vis[0].no;
   const g=progOf(t, pj.stage);
   let L=`<div class="pjl-top"><span class="tstep" style="background:${STAGE_SOFT[st.k][0]};color:${STAGE_SOFT[st.k][1]}">${st.n}</span>
@@ -775,7 +825,7 @@ function renderPj(){
         <input type="checkbox" id="pjShowAll" ${pj.showAll?'checked':''}> 전체 항목 보기${hiddenN?` (+${hiddenN})`:''}</label></div>`;
   if(!isPart){
     const fns=[...new Set(itemsOf(t).filter(x=>x.stage===pj.stage).map(x=>x.fn))];
-    L+=`<div class="fnbar"><span class="fnc${pj.fn?'':' on'}" data-fn="">전체</span>${ROA.fns.filter(fn=>fns.includes(fn.k)).map(fn=>
+    L+=`<div class="fnbar"><span class="fnc${pj.fn?'':' on'}" data-fn="">전체</span>${ROA.fns.concat([{k:'HB',en:'Handbook',ko:'Handbook'}]).filter(fn=>fns.includes(fn.k)).map(fn=>
         `<span class="fnc${pj.fn===fn.k?' on':''}" data-fn="${fn.k}">${esc(fn[qLang])}</span>`).join('')}</div>`;
   }
   msList(t, pj.stage).forEach(m=>{
@@ -789,7 +839,8 @@ function renderPj(){
       const code = isPart ? pqaCode(x, pqaCfg(p.id)) : '';
       L+=`<div class="pjl-it${pj.no===x.no?' on':''}${s==='na'?' na':''}" data-no="${x.no}">
           <span class="sti ${s}" title="${ST_NAME[s]}">${ST_ICON[s]}</span>
-          ${isPart?`<span class="mo mo-${code==='-'?'x':code}" title="${MO_NAME[code]}">${code==='-'?'·':code}</span>`:`<span class="fnt">${esc(x.fn)}</span>`}
+          ${x.src==='hb'?`<span class="mo mo-H" title="Handbook 활동">H</span>`
+            : isPart?`<span class="mo mo-${code==='-'?'x':code}" title="${MO_NAME[code]}">${code==='-'?'·':code}</span>`:`<span class="fnt">${esc(x.fn)}</span>`}
           <span class="tt" title="${attr(tx(x,'title'))}">${esc(tx(x,'title'))}</span>
           ${nAtt?`<span class="ac">📎${nAtt}</span>`:''}
           ${pd?`<span class="dd${s==='late'?' late':''}">${pd}</span>`:''}</div>`;
@@ -815,14 +866,19 @@ function briefHtml(full, key){
 
 function renderPjDetail(){
   const box=$('pjDetail'), t=pj.t, isPart=t.kind==='part';
-  const x=itemsOf(t).find(i=>i.no===pj.no);
+  const x=curItem();
   if(!x){ box.innerHTML='<div class="pjd-empty">왼쪽 목록에서 항목을 고르세요.</div>'; pj.snap=null; return; }
   const r=rowOf(t,x.no,x.stage), on=isOn(t,x), s=stateOf(t,x);
   const atts = r ? attachments.filter(a=>a.ptask_id===r.id) : [];
   const curStatus=(r&&r.status)||'plan';
   const ms = isPart ? PQA.ms.find(m=>m.k===x.ms) : ROA.ms.find(m=>m.k===x.ms);
   let meta='', body='';
-  if(isPart){
+  if(x.src==='hb'){
+    const c=QRM.cats.find(k=>k.k===x.cat);
+    meta=`<span class="tagx mo-H">Handbook ${x.no}</span><span class="tagx">${esc(c?c[qLang]:'')}</span>
+      ${qLang==='en'?'':`<span class="tagx" title="원문 제목">${esc(x.en.title)}</span>`}`;
+    body = briefHtml(tx(x,'desc')) + (tx(x,'deliv')?`<div class="hb-sec"><h4>${qLang==='ko'?'산출물':'Deliverable'}</h4><div class="brief">${esc(tx(x,'deliv'))}</div></div>`:'');
+  } else if(isPart){
     const code=pqaCode(x, pqaCfg(t.pid));
     meta=`<span class="tagx">${esc(ms?(qLang==='ko'?ms.ko:ms.n):x.ms)}</span>
       <span class="tagx mo-${code==='-'?'x':code}">${MO_NAME[code]}</span>
@@ -885,7 +941,7 @@ async function saveTaskFor(t, no, stage, patch){
   ptasks=ptasks.filter(x=>x.id!==saved.id).concat(saved);
   return saved;
 }
-function curItem(){ return itemsOf(pj.t).find(i=>i.no===pj.no); }
+function curItem(){ return itemsOf(pj.t).find(i=>i.no===pj.no && i.stage===pj.stage); }
 async function saveTask(patch){ const x=curItem(); return x ? saveTaskFor(pj.t, x.no, x.stage, patch) : null; }
 async function saveResult(){
   const ta=$('pjResult'); if(!ta) return true;
@@ -936,6 +992,11 @@ function onPjClick(e){
   if(e.target.closest('#pjClose')){ closePj(); return; }
   const lb=e.target.closest('[data-lang]'); if(lb){ setLang(lb.dataset.lang); return; }
   const hb=e.target.closest('[data-hb]'); if(hb){ openHb(Number(hb.dataset.hb)||null); return; }
+  const tpb=e.target.closest('[data-tplopen]'); if(tpb){ openTpl(tpb.dataset.tplopen); return; }
+  const oc=e.target.closest('[data-opencar]');
+  if(oc){ (async()=>{ if(!await pjLeave()) return; openPj(tCar(oc.dataset.opencar), pj.stage); })(); return; }
+  const op=e.target.closest('[data-openpart]');
+  if(op){ (async()=>{ if(!await pjLeave()) return; openPj(tPart(Number(op.dataset.openpart)), pj.stage); })(); return; }
   const stg=e.target.closest('[data-pjstage]');
   if(stg){ (async()=>{ if(!await pjLeave()) return; pj.stage=stg.dataset.pjstage; pj.no=null; pj.snap=null; renderPj(); })(); return; }
   const fn=e.target.closest('[data-fn]');
@@ -998,6 +1059,120 @@ function onHbClick(e){
   if(e.target.closest('#hbClose')){ $('hbOverlay').classList.remove('on'); return; }
   const lb=e.target.closest('[data-lang]'); if(lb){ setLang(lb.dataset.lang); return; }
   const it=e.target.closest('[data-hbno]'); if(it){ hb.no=Number(it.dataset.hbno); renderHb(); }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  항목 설정 — 협력사 / 고객사 트랙의 단계별 항목 구성을 직접 정리
+//  행: PQA(또는 ROA) 항목 + Handbook 49개 활동, 열: Proto~SOP 체크
+// ════════════════════════════════════════════════════════════════
+const tpl = { track:'sup', src:'all', q:'', only:'' };
+function openTpl(track){
+  if(track) tpl.track=track;
+  $('tplOverlay').classList.add('on');
+  renderTpl();
+}
+function tplCands(track){
+  const base = baseItems(track).map(x=>({ no:x.no, src:'base', x }));
+  const hbs  = QRM.acts.map(a=>({ no:a.no, src:'hb', x:{ no:a.no, src:'hb' }, a }));
+  return base.concat(hbs);
+}
+function tplChanged(track, no){ return STAGES.some(s=>tplMap.has(tplKey(track, no, s.k))); }
+function renderTpl(){
+  const track=tpl.track, isSup=track==='sup';
+  document.querySelectorAll('#tplBox [data-tpltrack]').forEach(b=>b.classList.toggle('on', b.dataset.tpltrack===track));
+  document.querySelectorAll('#tplBox [data-tplsrc]').forEach(b=>b.classList.toggle('on', b.dataset.tplsrc===tpl.src));
+  document.querySelectorAll('#tplBox [data-tplonly]').forEach(b=>b.classList.toggle('on', b.dataset.tplonly===tpl.only));
+  document.querySelectorAll('#tplBox [data-tplsrc="base"]').forEach(b=>{ b.textContent = isSup ? 'PQA' : 'ROA'; });
+  const ent=entries(track);
+  const q=tpl.q.trim().toLowerCase();
+  const rows=tplCands(track).filter(c=>{
+    if(tpl.src!=='all' && c.src!==tpl.src) return false;
+    if(tpl.only==='on' && !STAGES.some(s=>tplOn(track, c.x, s.k))) return false;
+    if(tpl.only==='chg' && !tplChanged(track, c.no)) return false;
+    if(!q) return true;
+    const o = c.a || c.x;
+    return [String(c.no), o.en&&o.en.title, o.ko&&o.ko.title].some(v=>v && String(v).toLowerCase().includes(q));
+  });
+  // 그룹: PQA/ROA 는 마일스톤, Handbook 은 분류
+  const groupOf = c => c.src==='hb'
+    ? 'HB:'+c.a.cat
+    : (isSup ? 'MS:'+c.x.ms : 'MS:'+c.x.ms);
+  const groupName = g => {
+    const [k,v]=g.split(':');
+    if(k==='HB'){ const c=QRM.cats.find(x=>x.k===v); return '📖 Handbook · '+(c?c[qLang]:v); }
+    if(isSup){ const m=PQA.ms.find(x=>x.k===v); return 'PQA · '+(m?(qLang==='ko'?m.ko:m.n):v); }
+    const m=ROA.ms.find(x=>x.k===v); return 'ROA · '+v+(m&&m.expl?' — '+m.expl.split(/[:(（]/)[0].trim():'');
+  };
+  let body='', lastG=null;
+  rows.forEach(c=>{
+    const g=groupOf(c);
+    if(g!==lastG){ body+=`<tr class="tg"><td colspan="${3+STAGES.length}">${esc(groupName(g))}</td></tr>`; lastG=g; }
+    const o=c.a || c.x;
+    const title=tx(o,'title'), sub = qLang==='ko' ? (o.en&&o.en.title) : '';
+    const extra = c.src==='hb' ? '' : (isSup ? '' : `<span class="fnt">${esc(c.x.fn)}</span>`);
+    body+=`<tr>
+      <td class="tn">${c.src==='hb'?'<span class="mo mo-H">H</span>':''}${c.no}</td>
+      <td class="tt2">${extra}<span class="t1" ${c.src==='hb'?`data-hb="${c.no}" title="Handbook에서 열기"`:''}>${esc(title)}</span>${sub&&sub!==title?`<span class="t2">${esc(sub)}</span>`:''}</td>
+      ${STAGES.map(s=>{
+        const on=tplOn(track, c.x, s.k), def=tplDefault(track, c.x, s.k), chg=tplMap.has(tplKey(track, c.no, s.k));
+        const sug = c.src==='hb' && c.a.stages.includes(s.k);
+        return `<td class="tc${def?' def':''}${sug?' sug':''}${chg?' chg':''}" title="${def?'원래 단계':''}${sug?'Handbook 기준 수행 시점':''}">
+          <input type="checkbox" data-tplno="${c.no}" data-tplhb="${c.src==='hb'?1:0}" data-tplst="${s.k}" ${on?'checked':''}></td>`;
+      }).join('')}
+      <td class="tr">${tplChanged(track, c.no)?`<span class="jump" data-tplreset="${c.no}" title="이 항목을 기본값으로">되돌리기</span>`:''}</td></tr>`;
+  });
+  $('tplBody').innerHTML=`<table class="tpl"><thead><tr><th class="tn">#</th><th>${isSup?'협력사 (PQA + Handbook)':'고객사 (ROA + Handbook)'} · ${rows.length}개</th>
+      ${STAGES.map(s=>`<th class="tc"><span style="color:${s.c}">${s.n}</span><span class="cnt">${ent.filter(e=>e.stage===s.k).length}</span></th>`).join('')}<th></th></tr></thead>
+    <tbody>${body||`<tr><td colspan="${3+STAGES.length}" class="empty">조건에 맞는 항목이 없습니다.</td></tr>`}</tbody></table>`;
+}
+// 기록(결과·상태)이 남아 있는지 — 단계에서 뺄 때 알려주기 위해
+function tplUsage(track, no, stage){
+  return ptasks.filter(r=>r.act_no===no && r.stage===stage && (track==='sup' ? r.project_id : !r.project_id)
+    && (r.result || (r.status && r.status!=='plan') || r.plan_date)).length;
+}
+async function setTpl(track, no, stage, on, isHb){
+  if(!hasTpl){ alert('항목 설정을 저장하려면 migration.sql 의 "2026-10-19 · 3" 부분을 Supabase SQL Editor 에서 실행해 주세요.'); renderTpl(); return; }
+  const x = isHb ? { no, src:'hb' } : baseItems(track).find(i=>i.no===no);
+  if(!on){
+    const n=tplUsage(track, no, stage);
+    if(n && !confirm(`이 항목에 기록이 ${n}건 있습니다.\n단계에서 빼면 화면에서 안 보이게 되지만, 기록은 지워지지 않고 다시 넣으면 돌아옵니다.\n\n계속할까요?`)){ renderTpl(); return; }
+  }
+  const def=tplDefault(track, x, stage), r=tplMap.get(tplKey(track, no, stage));
+  let error=null;
+  if(on===def){
+    if(r){ ({ error } = await sb.from('checklist_tpl').delete().eq('id', r.id)); if(!error) tplRows=tplRows.filter(t=>t.id!==r.id); }
+  } else {
+    const res = await sb.from('checklist_tpl').upsert({ track, item_no:no, stage, enabled:on, updated_at:new Date().toISOString() },
+                                                    { onConflict:'track,item_no,stage' }).select();
+    error=res.error;
+    if(!error) tplRows=tplRows.filter(t=>t.id!==res.data[0].id).concat(res.data[0]);
+  }
+  if(error){ alert('저장 실패: '+error.message); }
+  setTplRows(tplRows);
+  renderTpl(); renderMain();
+  if(pj.t && $('pjOverlay').classList.contains('on')) renderPj();
+}
+async function resetTpl(track, no){
+  const ids=tplRows.filter(r=>r.track===track && (no==null || r.item_no===no)).map(r=>r.id);
+  if(!ids.length) return;
+  if(no==null && !confirm(`${track==='sup'?'협력사':'고객사'} 트랙의 항목 설정 ${ids.length}칸을 모두 기본값으로 되돌릴까요?`)) return;
+  showLoading('되돌리는 중...');
+  const { error } = await sb.from('checklist_tpl').delete().in('id', ids);
+  hideLoading();
+  if(error){ alert('실패: '+error.message); return; }
+  setTplRows(tplRows.filter(r=>!ids.includes(r.id)));
+  renderTpl(); renderMain();
+  if(pj.t && $('pjOverlay').classList.contains('on')) renderPj();
+}
+function onTplClick(e){
+  if(e.target.closest('#tplClose')){ $('tplOverlay').classList.remove('on'); return; }
+  const lb=e.target.closest('[data-lang]'); if(lb){ setLang(lb.dataset.lang); return; }
+  const tr=e.target.closest('[data-tpltrack]'); if(tr){ tpl.track=tr.dataset.tpltrack; renderTpl(); return; }
+  const sr=e.target.closest('[data-tplsrc]'); if(sr){ tpl.src=sr.dataset.tplsrc; renderTpl(); return; }
+  const on=e.target.closest('[data-tplonly]'); if(on){ tpl.only = tpl.only===on.dataset.tplonly ? '' : on.dataset.tplonly; renderTpl(); return; }
+  const rs=e.target.closest('[data-tplreset]'); if(rs){ resetTpl(tpl.track, Number(rs.dataset.tplreset)); return; }
+  if(e.target.closest('#tplResetAll')){ resetTpl(tpl.track, null); return; }
+  const hb=e.target.closest('[data-hb]'); if(hb){ openHb(Number(hb.dataset.hb)); return; }
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -1924,6 +2099,15 @@ function init(){
   $('hbBox').addEventListener('click', onHbClick);
   $('hbFind').addEventListener('input', e=>{ hb.q=e.target.value; renderHb(); });
   onBackdropClick('hbOverlay', ()=>$('hbOverlay').classList.remove('on'));
+  // 항목 설정
+  $('tplBtn').addEventListener('click', ()=>openTpl());
+  $('tplBox').addEventListener('click', onTplClick);
+  $('tplBox').addEventListener('change', e=>{
+    const cb=e.target.closest('[data-tplno]'); if(!cb) return;
+    setTpl(tpl.track, Number(cb.dataset.tplno), cb.dataset.tplst, cb.checked, cb.dataset.tplhb==='1');
+  });
+  $('tplFind').addEventListener('input', e=>{ tpl.q=e.target.value; renderTpl(); });
+  onBackdropClick('tplOverlay', ()=>$('tplOverlay').classList.remove('on'));
 
   $('bomSearch').addEventListener('input', renderBOM);
   // 협력사 고르기
@@ -1971,6 +2155,7 @@ function init(){
     if($('viewer').classList.contains('on')){ $('viewer').classList.remove('on'); return; }
     if($('modalOverlay').classList.contains('on')){ tryCloseModal(); return; }
     if($('hbOverlay').classList.contains('on')){ $('hbOverlay').classList.remove('on'); return; }
+    if($('tplOverlay').classList.contains('on')){ $('tplOverlay').classList.remove('on'); return; }
     if($('bigOverlay').classList.contains('on')){ closeBig(false); return; }
     if($('pjOverlay').classList.contains('on')) closePj();
   });

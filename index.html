@@ -485,7 +485,49 @@ table.gt{border-collapse:separate;border-spacing:0;font-size:11.5px;width:max-co
 
 /* ═══════════ 부품 상세 창 ═══════════ */
 #pjOverlay{z-index:140;}          /* 상세 창 위에 수정창·링크창이 뜨도록 한 단계 아래 */
-#hbOverlay{z-index:145;}          /* Handbook 은 상세 창 위, 수정창 아래 */
+#hbOverlay{z-index:146;}          /* Handbook 은 상세 창·항목 설정 위, 수정창 아래 */
+#tplOverlay{z-index:144;}
+.jump{color:var(--accent2);cursor:pointer;font-weight:650;white-space:nowrap;}
+.jump:hover{text-decoration:underline;}
+.ep-meta .jump{margin-right:8px;font-weight:600;}
+.partsrow{flex-basis:100%;display:flex;gap:5px;align-items:center;overflow-x:auto;white-space:nowrap;padding-top:2px;}
+.partsrow .lbl{font-size:10.5px;font-weight:700;color:var(--muted);margin-right:3px;flex-shrink:0;}
+.pchip{font-size:11px;color:var(--sub);background:var(--card2);border:1px solid var(--line);border-radius:7px;padding:3px 9px;
+  cursor:pointer;flex-shrink:0;}
+.pchip b{color:#5eead4;font-weight:700;margin-right:3px;}
+.pchip i{font-style:normal;font-size:10px;color:var(--muted);margin-left:4px;}
+.pchip:hover{border-color:var(--accent);color:var(--ink);}
+.mo-H{background:rgba(129,140,248,.22);color:#c7d2fe;}
+/* 항목 설정 */
+.tplbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:10px 18px;border-bottom:1px solid var(--line);flex-shrink:0;background:#121926;}
+.tplbar .seg button.on{background:var(--accent);color:#fff;}
+.tplbar .bom-search{width:190px;}
+.tpl-legend{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:var(--sub);margin-left:6px;}
+.tpl-legend .lg{width:12px;height:12px;border-radius:3px;display:inline-block;margin-left:6px;}
+.lg.def{box-shadow:inset 0 0 0 2px rgba(148,162,190,.55);}
+.lg.sug{background:rgba(129,140,248,.28);}
+.lg.chg{background:rgba(251,191,36,.35);}
+.tpl-body{flex:1;min-height:0;overflow:auto;}
+table.tpl{width:100%;border-collapse:separate;border-spacing:0;font-size:12px;}
+.tpl thead th{position:sticky;top:0;z-index:2;background:var(--card2);color:var(--muted);font-size:10.5px;font-weight:700;
+  padding:8px 6px;border-bottom:1px solid var(--line);text-align:left;}
+.tpl th.tc{text-align:center;width:66px;}
+.tpl th .cnt{display:block;font-size:10px;color:var(--sub);font-weight:600;}
+.tpl td{padding:5px 6px;border-bottom:1px solid var(--line2);vertical-align:middle;}
+.tpl tr.tg td{background:#161f31;color:var(--accent2);font-size:10.5px;font-weight:750;letter-spacing:.02em;padding:7px 10px;}
+.tpl td.tn{width:62px;font-family:Consolas,monospace;font-size:10.5px;color:var(--muted);white-space:nowrap;}
+.tpl td.tn .mo{margin-right:4px;}
+.tpl td.tt2 .t1{font-weight:600;}
+.tpl td.tt2 .t1[data-hb]{cursor:pointer;} .tpl td.tt2 .t1[data-hb]:hover{color:var(--accent2);text-decoration:underline;}
+.tpl td.tt2 .t2{display:block;font-size:10.5px;color:var(--muted);}
+.tpl td.tt2 .fnt{display:inline-block;margin-right:6px;}
+.tpl td.tc{text-align:center;width:66px;}
+.tpl td.tc.def{box-shadow:inset 0 0 0 2px rgba(148,162,190,.35);}
+.tpl td.tc.sug{background:rgba(129,140,248,.14);}
+.tpl td.tc.chg{background:rgba(251,191,36,.22);}
+.tpl td.tc input{width:16px;height:16px;cursor:pointer;accent-color:var(--accent);}
+.tpl td.tr{width:70px;font-size:10.5px;}
+.tpl tbody tr:hover td:not(.tc){background:rgba(99,102,241,.05);}
 .btn-hb{font-size:12px;font-weight:650;background:var(--card);color:var(--ink);border:1px solid var(--line);
   padding:6px 12px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;}
 .btn-hb:hover{border-color:var(--accent);color:var(--accent2);}
@@ -681,6 +723,7 @@ textarea.modal-input{resize:vertical;line-height:1.75;}
   <div class="top-right">
     <div class="chip-s" id="connStatus"><div class="dot"></div><span id="connText">연결 확인 중...</span></div>
     <div class="chip-s" id="todayBadge"></div>
+    <button class="btn-hb" id="tplBtn" title="협력사 / 고객사 단계별로 어떤 항목을 넣을지 정리"><i class="ti ti-adjustments"></i> 항목 설정</button>
     <button class="btn-hb" id="hbBtn" title="QRM Handbook 49개 활동 (EN / 한국어)"><i class="ti ti-book"></i> Handbook</button>
     <button class="btn-primary" id="newBtn">+ 신규 등록</button>
   </div>
@@ -826,6 +869,31 @@ textarea.modal-input{resize:vertical;line-height:1.75;}
       <div class="pj-list" id="hbList"></div>
       <div class="pj-detail" id="hbDetail"></div>
     </div>
+  </div>
+</div>
+
+<!-- 항목 설정 -->
+<div class="overlay" id="tplOverlay">
+  <div class="modal pj" id="tplBox">
+    <div class="pj-head">
+      <div class="ep-badge" style="background:var(--accent);"><i class="ti ti-adjustments"></i></div>
+      <div><div class="ep-title">항목 설정</div>
+        <div class="ep-meta">단계마다 어떤 항목을 넣을지 체크하세요. 바꾼 칸만 저장되고, 모든 부품/차종에 같이 적용됩니다.</div></div>
+      <div class="x">
+        <span class="lang-tog"><button data-lang="en">EN</button><button data-lang="ko">한국어</button></span>
+        <button class="btn-x" id="tplClose" title="닫기 (Esc)">✕</button></div>
+    </div>
+    <div class="tplbar">
+      <span class="seg"><button data-tpltrack="sup">협력사 (Supplier)</button><button data-tpltrack="cus">고객사 (Customer)</button></span>
+      <span class="sep"></span>
+      <span class="fnc" data-tplsrc="all">전체</span><span class="fnc" data-tplsrc="base">PQA</span><span class="fnc" data-tplsrc="hb">Handbook</span>
+      <span class="sep"></span>
+      <span class="fnc" data-tplonly="on">넣은 것만</span><span class="fnc" data-tplonly="chg">바꾼 것만</span>
+      <input class="bom-search" id="tplFind" placeholder="🔍 번호 · 항목명">
+      <span class="tpl-legend"><i class="lg def"></i>원래 단계 <i class="lg sug"></i>Handbook 기준 시점 <i class="lg chg"></i>바꾼 칸</span>
+      <button class="btn-xs danger" id="tplResetAll" style="margin-left:auto">이 트랙 전부 기본값으로</button>
+    </div>
+    <div class="tpl-body" id="tplBody"></div>
   </div>
 </div>
 
