@@ -485,6 +485,39 @@ table.gt{border-collapse:separate;border-spacing:0;font-size:11.5px;width:max-co
 
 /* ═══════════ 부품 상세 창 ═══════════ */
 #pjOverlay{z-index:140;}          /* 상세 창 위에 수정창·링크창이 뜨도록 한 단계 아래 */
+#hbOverlay{z-index:145;}          /* Handbook 은 상세 창 위, 수정창 아래 */
+.btn-hb{font-size:12px;font-weight:650;background:var(--card);color:var(--ink);border:1px solid var(--line);
+  padding:6px 12px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;}
+.btn-hb:hover{border-color:var(--accent);color:var(--accent2);}
+.trk{font-size:10px;font-weight:800;padding:2px 8px;border-radius:5px;vertical-align:middle;margin-right:4px;}
+.trk.sup{background:rgba(45,212,191,.16);color:#5eead4;}
+.trk.cus{background:rgba(251,191,36,.16);color:#fcd34d;}
+.cfgbox{display:flex;gap:10px;align-items:center;padding:6px 10px;border:1px solid var(--line);border-radius:9px;background:var(--card2);
+  font-size:11px;color:var(--sub);flex-wrap:wrap;}
+.cfgbox.unset{border-color:#c2770c;}
+.cfgbox select{background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:3px 6px;
+  font-size:11.5px;font-family:inherit;margin-left:4px;max-width:250px;}
+.cfghint{color:#fcd34d;font-weight:650;}
+.fnbar{display:flex;gap:4px;flex-wrap:wrap;padding:0 14px 6px;}
+.fnc{font-size:10.5px;font-weight:650;color:var(--sub);background:#1e2739;border-radius:12px;padding:2px 9px;cursor:pointer;}
+.fnc:hover{color:var(--ink);} .fnc.on{background:var(--accent);color:#fff;}
+.pjl-cat .msd{display:block;font-size:10px;font-weight:500;color:var(--muted);text-transform:none;letter-spacing:0;
+  margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mo{font-size:9px;font-weight:800;width:16px;height:16px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;}
+.mo-M{background:rgba(52,211,153,.18);color:#6ee7b7;} .mo-O{background:rgba(251,191,36,.15);color:#fcd34d;}
+.mo-A{background:rgba(99,102,241,.2);color:#a5b4fc;} .mo-x{background:#1e2739;color:var(--dim);}
+.tagx.mo-M,.tagx.mo-O,.tagx.mo-A,.tagx.mo-x{width:auto;height:auto;}
+.fnt{font-size:8.5px;font-weight:800;color:var(--muted);width:28px;flex-shrink:0;}
+.brief{font-size:13px;line-height:1.75;color:var(--ink);white-space:pre-wrap;word-break:break-word;margin-bottom:8px;}
+details.more{margin:0 0 10px;}
+details.more summary{font-size:11.5px;color:var(--accent2);cursor:pointer;user-select:none;}
+details.more .tx{font-size:12.5px;line-height:1.75;color:#c3cee3;white-space:pre-wrap;word-break:break-word;margin-top:6px;
+  padding:10px 12px;background:var(--card2);border-radius:8px;}
+.hbchips{display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin:10px 0 4px;}
+.hbchips .lbl{font-size:10.5px;font-weight:700;color:var(--muted);margin-right:3px;}
+.hbchip{font-size:11px;background:var(--accent-soft);color:var(--accent2);padding:3px 9px;border-radius:6px;cursor:pointer;
+  max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.hbchip:hover{background:rgba(99,102,241,.3);color:#fff;}
 .modal.pj{width:1320px;height:90vh;padding:0;resize:both;overflow:hidden;}
 .pj-head{display:flex;align-items:center;gap:10px;padding:13px 18px;border-bottom:1px solid var(--line);flex-shrink:0;flex-wrap:wrap;}
 .pj-head .x{margin-left:auto;display:flex;gap:6px;align-items:center;}
@@ -648,6 +681,7 @@ textarea.modal-input{resize:vertical;line-height:1.75;}
   <div class="top-right">
     <div class="chip-s" id="connStatus"><div class="dot"></div><span id="connText">연결 확인 중...</span></div>
     <div class="chip-s" id="todayBadge"></div>
+    <button class="btn-hb" id="hbBtn" title="QRM Handbook 49개 활동 (EN / 한국어)"><i class="ti ti-book"></i> Handbook</button>
     <button class="btn-primary" id="newBtn">+ 신규 등록</button>
   </div>
 </div>
@@ -778,9 +812,27 @@ textarea.modal-input{resize:vertical;line-height:1.75;}
   </div>
 </div>
 
+<!-- Handbook 자료실 -->
+<div class="overlay" id="hbOverlay">
+  <div class="modal pj" id="hbBox">
+    <div class="pj-head">
+      <div class="ep-badge" style="background:var(--accent);"><i class="ti ti-book"></i></div>
+      <div><div class="ep-title">QRM Handbook</div><div class="ep-meta">4.0 release 2.3 · 49개 활동 · 단계 배치는 rev 3.0 기준</div></div>
+      <input class="bom-search" id="hbFind" placeholder="🔍 번호 · 제목 · 목적 검색" style="margin-left:14px">
+      <div class="x"><span class="lang-tog" title="설명 언어"><button data-lang="en">EN</button><button data-lang="ko">한국어</button></span>
+        <button class="btn-x" id="hbClose" title="닫기 (Esc)">✕</button></div>
+    </div>
+    <div class="pj-body">
+      <div class="pj-list" id="hbList"></div>
+      <div class="pj-detail" id="hbDetail"></div>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="config.js"></script>
 <script src="qrm_data.js"></script>
+<script src="track_data.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

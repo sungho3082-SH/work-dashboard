@@ -10,7 +10,8 @@ Hanon Systems P&SD 부품 개발 일정 · 이슈 · BOM · To-Do 관리 대시�
 | `index.html` | 화면 전체 (다크 테마, 4개 탭) |
 | `app.js` | 로직 (Supabase 연동, 플로우 렌더링, 편집) |
 | `config.js` | Supabase URL / anon 키 |
-| `qrm_data.js` | QRM Handbook 활동 49개 (영/한, 단계 배치, 추천 여부) — 자동 생성 |
+| `qrm_data.js` | QRM Handbook 활동 49개 (영/한) — 오른쪽 위 Handbook 자료실 — 자동 생성 |
+| `track_data.js` | 협력사 PQA 85개 / 고객사 ROA 258개 체크 항목 (영/한, Handbook 연결) — 자동 생성 |
 | `migration.sql` | DB 스키마 (한 번 실행) |
 
 배포에 필요한 건 `index.html` / `app.js` / `config.js` / `qrm_data.js` 4개입니다.
@@ -33,12 +34,14 @@ Hanon Systems P&SD 부품 개발 일정 · 이슈 · BOM · To-Do 관리 대시�
 - `todos` / `attachments` — 할 일, 첨부파일(Storage `photos` 버킷). 체크 항목 첨부는 `attachments.ptask_id`
 - `project_tasks` — 부품 × Handbook 활동 × 단계 한 줄. 상태(계획/진행/완료), 계획일·완료일, 결과, 적용 여부(`null` 이면 추천 기본값)
 
-## QRM Handbook 체크 항목
+## 체크 항목 (2트랙) + Handbook
 
-- 기준: QRM Handbook **4.0 release 2.3** (49개 활동). 단계 배치는 rev 3.0 마일스톤표를 HKMC 단계로 옮긴 것
-  (Proto = CAAV~DESF · P1 = IARV~OFTO · P2 = OTOP · M = FDPR/ISVA · SOP = SOPR~PRCL)
-- 협력사 부품 개발 관점의 **추천 30개**만 기본으로 켜져 있고, 나머지는 상세 창의 "Handbook 전체 보기"에서 부품별로 추가/제외
-- 원문은 `참고자료/` 폴더의 엑셀에서 추출합니다 (`.gitignore` 로 제외)
+- **부품 행 → 협력사(PQA)**: SRM PQA 시나리오 마스터 리스트 기준. 부품마다 시나리오(비전자/PCBA/전자부품/멀티사이트/캐리오버)와
+  복잡도(High/Medium/Low/P0)를 고르면 필수(M) 항목이 자동으로 켜짐. 단계: Proto = SoCo·S-VRF · P1 = DESV · P2 = PROV · M = SISV · SOP = PQAG·양산 중
+- **차종 행 → 고객사(ROA)**: 개발절차의 마일스톤 체크리스트(CAAV~SSSR, 부문별 활동·산출물·판정 기준). 차종 단위로 한 번만 관리
+- 항목마다 짧은 설명 + 관련 **Handbook** 활동 링크. Handbook(QRM 4.0 rel 2.3, 49개)은 오른쪽 위 버튼으로 언제든 열람
+- 부품별 PQA 설정은 `project_tasks` 의 `act_no=0, stage='cfg'` 줄에 JSON 으로 보관
+- 원문은 `참고자료/` 폴더의 엑셀·PDF에서 추출합니다 (`.gitignore` 로 제외)
 
 ## 처음 세팅
 

@@ -136,3 +136,16 @@ create policy "project_tasks public" on project_tasks
   for all to anon, authenticated using (true) with check (true);
 
 select 'project_tasks 준비됨' as result, count(*) from project_tasks;
+
+-- ════════════════════════════════════════════════════════
+-- 추가 (2026-10-19 · 2) : 고객사(ROA) 체크는 차종 단위로 저장
+-- 이미 실행했어도 다시 돌려도 안전합니다.
+-- ════════════════════════════════════════════════════════
+alter table project_tasks alter column project_id drop not null;
+alter table project_tasks add column if not exists car_model text;
+
+-- 차종 단위 항목은 (차종, 항목, 단계) 마다 한 줄
+create unique index if not exists project_tasks_car_uq
+  on project_tasks (car_model, act_no, stage) where project_id is null;
+
+select 'project_tasks.car_model 준비됨' as result;

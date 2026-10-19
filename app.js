@@ -355,16 +355,18 @@ async function loadAll(){
   setConn('ok', `연결됨 · 부품 ${projects.length}`);
   if(!bomCur){ const cars=[...new Set(boms.map(b=>b.car_model))]; bomCur = cars[0]||null; }
   renderAll();
-  // 주소 끝이 #p=부품번호[&s=단계&a=항목] 이면 그 부품 상세를 바로 연다
-  const m=/^#p=(\d+)(?:&s=(\w+))?(?:&a=(\d+))?/.exec(location.hash||'');
+  // 주소 끝이 #p=부품번호 또는 #c=차종 [&s=단계&a=항목] 이면 그 상세를 바로 연다
+  const m=/^#(p|c)=([^&]+)(?:&s=(\w+))?(?:&a=(\d+))?/.exec(location.hash||'');
   if(m && !$('pjOverlay').classList.contains('on')){
-    openPj(Number(m[1]), m[2]);
-    if(m[3]){ pj.act=Number(m[3]); renderPj(); }
+    openPj(m[1]==='p' ? tPart(Number(m[2])) : tCar(decodeURIComponent(m[2])), m[3]);
+    if(m[4]){ pj.no=Number(m[4]); renderPj(); }
   }
+  const h=/^#hb=(\d+)/.exec(location.hash||'');
+  if(h) openHb(Number(h[1]));
 }
 function renderAll(){
   renderMain(); renderHome(); renderTimeline(); renderBOM(); renderTodos();
-  if(pj.pid && $('pjOverlay').classList.contains('on')) renderPj();
+  if(pj.t && $('pjOverlay').classList.contains('on')) renderPj();
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -445,41 +447,54 @@ function homeIssueCell(parts){
 }
 
 // ════════════════════════════════════════════════════════════════
-//  QRM 체크 항목 (qrm_data.js) — 부품 × 활동 × 단계
+//  체크 항목 — 협력사(PQA, 부품 단위) / 고객사(ROA, 차종 단위) + Handbook
+//  데이터: track_data.js (PQA, ROA) · qrm_data.js (QRM = Handbook)
 // ════════════════════════════════════════════════════════════════
-const QACT = {}; (typeof QRM!=='undefined' ? QRM.acts : []).forEach(a=>{ QACT[a.no]=a; });
-const STAGE_MS = { proto:'CAAV · PRKF · REQF · SOCO · DESF', p1:'IARV · TOGO · OFTO', p2:'OTOP',
-                   m:'FDPR · ISVA', sop:'SOPR · SOP · PRCL' };
+const HBACT = {}; (typeof QRM!=='undefined' ? QRM.acts : []).forEach(a=>{ HBACT[a.no]=a; });
 const ST_ICON = { plan:'☐', doing:'◧', done:'∎', late:'▲', na:'–' };
 const ST_NAME = { plan:'계획', doing:'진행', done:'완료', late:'지연', na:'제외' };
+const MO_NAME = { M:'필수', O:'선택', A:'자동', '-':'시나리오 외' };
 let qLang = (()=>{ try{ return localStorage.getItem('qrm_lang')||'en'; }catch(e){ return 'en'; } })();
 
-function stageActs(stage){ return (typeof QRM!=='undefined' ? QRM.acts : []).filter(a=>a.stages.includes(stage)); }
-function taskRow(pid, no, stage){ return ptasks.find(t=>t.project_id===pid && t.act_no===no && t.stage===stage); }
-// 적용 여부: 직접 고른 값이 없으면 추천(개발 관점) 여부를 따른다
-function isApplicable(pid, a, stage){
-  const r=taskRow(pid, a.no, stage);
-  return (r && r.applicable!==null && r.applicable!==undefined) ? r.applicable : a.rec;
+function tx(o, f){ return (o[qLang]&&o[qLang][f]) || (o.en&&o.en[f]) || ''; }
+function ymd2(d){ return d ? String(d.getFullYear()).slice(2)+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0') : ''; }
+
+// 대상: 부품(협력사 PQA) 또는 차종(고객사 ROA)
+const tPart = pid => ({ kind:'part', pid });
+const tCar  = car => ({ kind:'car', car });
+function itemsOf(t){ return t.kind==='part' ? PQA.items : ROA.items; }
+function rowOf(t, no, stage){
+  return t.kind==='part'
+    ? ptasks.find(r=>r.project_id===t.pid && r.act_no===no && r.stage===stage)
+    : ptasks.find(r=>!r.project_id && r.car_model===t.car && r.act_no===no && r.stage===stage);
 }
-function taskState(pid, a, stage){
-  if(!isApplicable(pid,a,stage)) return 'na';
-  const r=taskRow(pid, a.no, stage), s=(r&&r.status)||'plan';
+// 부품별 PQA 설정 (시나리오 · 복잡도) — act_no 0 / stage 'cfg' 줄에 JSON 으로 보관
+function pqaCfg(pid){
+  const r=rowOf(tPart(pid), 0, 'cfg');
+  try{ const c=JSON.parse((r&&r.result)||'{}'); return { sc:c.sc||'NE', cx:Number.isInteger(c.cx)?c.cx:0, set:!!r }; }
+  catch(e){ return { sc:'NE', cx:0, set:false }; }
+}
+function pqaCode(item, cfg){ const s=item.sc[cfg.sc]; return s ? s[cfg.cx] : '-'; }
+function inScope(t, item){ return t.kind==='car' || pqaCode(item, pqaCfg(t.pid))!=='-'; }
+function defaultOn(t, item){
+  if(t.kind==='car') return true;
+  const c=pqaCode(item, pqaCfg(t.pid)); return c==='M' || c==='A';
+}
+function isOn(t, item){
+  const r=rowOf(t, item.no, item.stage);
+  return (r && r.applicable!==null && r.applicable!==undefined) ? r.applicable : defaultOn(t, item);
+}
+function stateOf(t, item){
+  if(!isOn(t,item)) return 'na';
+  const r=rowOf(t, item.no, item.stage), s=(r&&r.status)||'plan';
   if(s!=='done' && r && r.plan_date && toDate(r.plan_date)<today) return 'late';
   return s;
 }
-function stageProgress(pid, stage){
-  const acts=stageActs(stage).filter(a=>isApplicable(pid,a,stage));
-  const done=acts.filter(a=>{ const r=taskRow(pid,a.no,stage); return r && r.status==='done'; }).length;
-  return { n:acts.length, done };
+function progOf(t, stage){
+  const on=itemsOf(t).filter(x=>(!stage || x.stage===stage) && isOn(t,x));
+  const done=on.filter(x=>{ const r=rowOf(t,x.no,x.stage); return r && r.status==='done'; }).length;
+  return { n:on.length, done, pct: on.length ? Math.round(done*100/on.length) : 0 };
 }
-function projProgress(pid){
-  let n=0, done=0;
-  STAGES.forEach(s=>{ const p=stageProgress(pid,s.k); n+=p.n; done+=p.done; });
-  return { n, done, pct: n ? Math.round(done*100/n) : 0 };
-}
-function tx(a, f){ return (a[qLang]&&a[qLang][f]) || a.en[f] || ''; }
-function catName(k){ const c=QRM.cats.find(x=>x.k===k); return c ? c[qLang] : k; }
-function ymd2(d){ return d ? String(d.getFullYear()).slice(2)+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0') : ''; }
 
 // ════════════════════════════════════════════════════════════════
 //  HOME — 차종 ▸ 부품 엑셀형 표 + 월별 현황
@@ -498,7 +513,6 @@ function monthRange(cars){
   return out;
 }
 function monIdx(d, months){ if(!d) return -1; return months.findIndex(x=>x.y===d.getFullYear() && x.m===d.getMonth()); }
-
 function dateCls(car){
   const { nodes } = nodesOf(car);
   const nxt = nodes.find(n=>n.start && n.start>today);
@@ -511,6 +525,11 @@ function dateCls(car){
     out[n.k]={ cls, txt:ymd2(n.start), d };
   });
   return out;
+}
+function progCell(g, c){
+  if(!g.n) return `<span class="sprog none">—</span>`;
+  const w=Math.round(g.done*100/g.n);
+  return `<span class="sprog${g.done===g.n?' full':''}" style="--c:${c}">${g.done}/${g.n}<span class="bar"><i style="width:${w}%"></i></span></span>`;
 }
 
 function renderMain(){
@@ -538,13 +557,12 @@ function renderMain(){
   const months=monthRange(order);
   const nowI=monIdx(today, months);
 
-  // ── 머리글 (2줄: 연도 / 월) ──
   const sortTh=(k,n)=>`<th class="c-dt sortable${gSort.k===k?' sorted':''}" rowspan="2" data-sort="${k}" title="눌러서 정렬">${n}${gSort.k===k?(gSort.dir>0?' ▲':' ▼'):''}</th>`;
   let yrs='', mons='';
   [...new Set(months.map(m=>m.y))].forEach(y=>{ yrs+=`<th colspan="12" class="c-mon ystart">${y}</th>`; });
   months.forEach((m,i)=>{ mons+=`<th class="c-mon${i===nowI?' now':''}${m.m===0?' ystart':''}">${m.m+1}</th>`; });
   let h=`<table class="gt"><thead>
-    <tr><th class="c-tog" rowspan="2"></th><th class="c-name" rowspan="2" style="text-align:left">차종 / 부품</th>
+    <tr><th class="c-tog" rowspan="2"></th><th class="c-name" rowspan="2" style="text-align:left">차종 (고객사 ROA) / 부품 (협력사 PQA)</th>
       <th class="c-sup" rowspan="2">협력사</th><th class="c-pm" rowspan="2">PM</th><th class="c-step" rowspan="2">Step</th>
       ${STAGES.map(s=>sortTh(s.k,s.n)).join('')}
       <th class="c-prog" rowspan="2">진행률</th>${yrs}</tr>
@@ -552,42 +570,31 @@ function renderMain(){
 
   order.forEach(cm=>{
     const parts=byCar[cm], col=getColor(cm), open=!gClosed[cm] || !!q;
-    const dc=dateCls(cm), sc=schedOf(cm);
-    const cur=curStageOf(cm);
+    const dc=dateCls(cm), sc=schedOf(cm), cur=curStageOf(cm);
     const sups=[...new Set(parts.map(p=>p.supplier_name).filter(Boolean))];
     const pms=[...new Set(parts.map(p=>p.pm).filter(Boolean))];
-    let n=0, done=0; parts.forEach(p=>{ const r=projProgress(p.id); n+=r.n; done+=r.done; });
-    const pct = n ? Math.round(done*100/n) : 0;
-
-    // 월 칸: 단계 시작 칩
+    const cp=progOf(tCar(cm));
     const mcell = months.map((m,i)=>{
       const chips = STAGES.filter(s=>monIdx(sc.start[s.k],months)===i).map(s=>
         `<span class="mchip${sc.start[s.k]<today?' past':''}" style="background:${s.c}" title="${s.n} ${ymdS(sc.start[s.k])}">${s.n==='Proto'?'Pr':s.n}</span>`).join('');
       return `<td class="c-mon${i===nowI?' now':''}${m.m===0?' ystart':''}">${chips}</td>`;
     }).join('');
-
     h+=`<tr class="gcar${open?' open':''}" data-car="${attr(cm)}">
-      <td class="c-tog"><span class="tri2">▶</span></td>
-      <td class="c-name"><span class="cbar2" style="background:${col}"></span>${esc(cm)}<span class="cnt">${parts.length}개</span></td>
+      <td class="c-tog" data-tog="1" title="접기/펼치기"><span class="tri2">▶</span></td>
+      <td class="c-name" title="눌러서 고객사(ROA) 체크 항목 열기"><span class="cbar2" style="background:${col}"></span>${esc(cm)}<span class="cnt">${parts.length}개</span></td>
       <td class="c-sup" title="${attr(sups.join(', '))}">${esc(sups.join(', '))}</td>
       <td class="c-pm" style="cursor:default">${esc(pms.join(', '))}</td>
       <td class="c-step"><span class="tstep" style="background:${(STAGE_SOFT[cur.key]||STAGE_SOFT.none)[0]};color:${(STAGE_SOFT[cur.key]||STAGE_SOFT.none)[1]}">${esc(cur.label)}</span></td>
       ${STAGES.map(s=>`<td class="c-dt"><span class="dcell ${dc[s.k].cls}" ${dc[s.k].d!==undefined?`title="${dc[s.k].d<0?'지남':'D-'+dc[s.k].d}"`:''}>${dc[s.k].txt}</span></td>`).join('')}
-      <td class="c-prog"><div class="oprog"><div class="bar"><i style="width:${pct}%"></i></div>${n?pct+'%':'—'}</div></td>
+      <td class="c-prog" title="고객사(ROA) 체크 진행률"><div class="oprog"><div class="bar"><i style="width:${cp.pct}%"></i></div>${cp.n?cp.pct+'%':'—'}</div></td>
       ${mcell}</tr>`;
 
     if(!open) return;
     parts.forEach(p=>{
-      const pr=projProgress(p.id);
+      const t=tPart(p.id), pr=progOf(t);
       const stepKey=(p.step||'').toLowerCase().replace(' ','');
       const sk=STAGES.find(s=>s.n.toLowerCase()===stepKey);
       const [bg,fg]=sk ? STAGE_SOFT[sk.k] : STAGE_SOFT.none;
-      const stCells=STAGES.map(s=>{
-        const g=stageProgress(p.id, s.k);
-        if(!g.n) return `<td class="c-dt"><span class="sprog none">—</span></td>`;
-        const w=Math.round(g.done*100/g.n);
-        return `<td class="c-dt"><span class="sprog${g.done===g.n?' full':''}" style="--c:${s.c}">${g.done}/${g.n}<span class="bar"><i style="width:${w}%"></i></span></span></td>`;
-      }).join('');
       const mcellP = months.map((m,i)=>{
         const stars = (hasCk?CKS:[]).filter(c=>monIdx(toDate(p[c.k]),months)===i).map(c=>{
           const d=toDate(p[c.k]);
@@ -601,15 +608,14 @@ function renderMain(){
         <td class="c-sup">${esc(p.supplier_name||'')}</td>
         <td class="c-pm" data-pm="${p.id}" title="눌러서 PM 지정">${p.pm?esc(p.pm):'<span class="ph">+</span>'}</td>
         <td class="c-step">${p.step?`<span class="tstep" style="background:${bg};color:${fg}">${esc(p.step)}</span>`:''}</td>
-        ${stCells}
-        <td class="c-prog"><div class="oprog"><div class="bar"><i style="width:${pr.pct}%"></i></div>${pr.n?pr.pct+'%':'—'}</div></td>
+        ${STAGES.map(s=>`<td class="c-dt">${progCell(progOf(t,s.k), s.c)}</td>`).join('')}
+        <td class="c-prog" title="협력사(PQA) 체크 진행률"><div class="oprog"><div class="bar"><i style="width:${pr.pct}%"></i></div>${pr.n?pr.pct+'%':'—'}</div></td>
         ${mcellP}</tr>`;
     });
   });
   h+='</tbody></table>';
   box.innerHTML=h;
 
-  // 처음 한 번은 이번 달이 보이도록 가로 스크롤
   if(!gScrolled && nowI>=0){
     const th=box.querySelector('thead tr.r2 th.now');
     if(th){ box.scrollLeft=Math.max(0, th.offsetLeft-box.clientWidth*0.55); gScrolled=true; }
@@ -626,12 +632,17 @@ function onMainClick(e){
   const pmTd=e.target.closest('td[data-pm]');
   if(pmTd){ editPm(Number(pmTd.dataset.pm)); return; }
   const car=e.target.closest('tr.gcar');
-  if(car){ const cm=car.dataset.car; gClosed[cm]=!gClosed[cm]; saveClosed(); renderMain(); return; }
+  if(car){
+    const cm=car.dataset.car;
+    if(e.target.closest('[data-tog]')){ gClosed[cm]=!gClosed[cm]; saveClosed(); renderMain(); return; }
+    if(hasSelection()) return;
+    openPj(tCar(cm)); return;
+  }
   const part=e.target.closest('tr.gpart');
-  if(part){ if(hasSelection()) return; openPj(Number(part.dataset.p)); }
+  if(part){ if(hasSelection()) return; openPj(tPart(Number(part.dataset.p))); }
 }
 function editPm(pid){
-  if(!hasPm){ alert('PM 칸을 쓰려면 migration.sql 의 마지막 부분(2026-10-19)을 Supabase SQL Editor 에서 실행해 주세요.'); return; }
+  if(!hasPm){ alert('PM 칸을 쓰려면 migration.sql 의 2026-10-19 부분을 Supabase SQL Editor 에서 실행해 주세요.'); return; }
   const p=projects.find(x=>x.id===pid); if(!p) return;
   openModal(`PM 지정 — ${p.part_name||''}`, fieldHtml('pm','PM 이름',p.pm,'예: 홍길동'), async()=>{
     const v=document.querySelector('#modalFields [data-k="pm"]').value.trim()||null;
@@ -641,67 +652,91 @@ function editPm(pid){
 }
 
 // ════════════════════════════════════════════════════════════════
-//  부품 상세 — 단계 도식 → 체크 항목 → 목적 · 결과 · 첨부
+//  상세 창 — 단계 도식 → 마일스톤별 체크 항목 → 짧은 설명 · Handbook 연결 · 결과 · 첨부
 // ════════════════════════════════════════════════════════════════
-const pj = { pid:null, stage:null, act:null, showAll:false, snap:null };
-const HB_LBL = {
-  en:{ why:'Why', what:'What', how:'How this activity must be performed', input:'Key input', deliverable:'Deliverable',
-       leader:'Activity leader', support:'Key support', rasic:'RASIC', refs:'Templates & procedures' },
-  ko:{ why:'목적 (Why)', what:'내용 (What)', how:'수행 방법 (How)', input:'주요 입력', deliverable:'산출물',
-       leader:'주관', support:'지원', rasic:'RASIC', refs:'양식 · 절차' }
-};
+const pj = { t:null, stage:null, no:null, showAll:false, fn:'', snap:null };
 
-function openPj(pid, stage){
-  const p=projects.find(x=>x.id===pid); if(!p) return;
-  pj.pid=pid; pj.act=null; pj.snap=null;
-  pj.stage = stage || curStageOf(p.car_model).key || 'proto';
+function openPj(t, stage){
+  if(t.kind==='part' && !projects.find(x=>x.id===t.pid)) return;
+  pj.t=t; pj.no=null; pj.snap=null; pj.fn='';
+  const car = t.kind==='part' ? projects.find(x=>x.id===t.pid).car_model : t.car;
+  pj.stage = stage || curStageOf(car).key || 'proto';
   loadSize($('pjBox'),'pj');
   $('pjOverlay').classList.add('on');
   renderPj();
 }
-function pjDirty(){
-  const ta=$('pjResult');
-  return !!(ta && pj.snap!==null && ta.value!==pj.snap);
-}
+function pjDirty(){ const ta=$('pjResult'); return !!(ta && pj.snap!==null && ta.value!==pj.snap); }
 async function pjLeave(){
   if(!pjDirty()) return true;
-  if(confirm('결과 입력란에 저장하지 않은 내용이 있습니다.\n\n[확인] 저장하고 이동\n[취소] 저장하지 않고 이동')){
-    return await saveResult();
-  }
+  if(confirm('결과 입력란에 저장하지 않은 내용이 있습니다.\n\n[확인] 저장하고 이동\n[취소] 저장하지 않고 이동')) return await saveResult();
   pj.snap=null; return true;
 }
 async function closePj(){
   if(!await pjLeave()) return;
   $('pjOverlay').classList.remove('on');
-  pj.pid=null; pj.act=null; pj.snap=null;
+  pj.t=null; pj.no=null; pj.snap=null;
 }
-function setLang(l){ qLang=l; try{ localStorage.setItem('qrm_lang',l); }catch(e){} renderPj(); }
+function setLang(l){
+  qLang=l; try{ localStorage.setItem('qrm_lang',l); }catch(e){}
+  if($('pjOverlay').classList.contains('on')) renderPj();
+  if($('hbOverlay').classList.contains('on')) renderHb();
+}
+function langToggle(){
+  return `<span class="lang-tog" title="설명 언어"><button data-lang="en" class="${qLang==='en'?'on':''}">EN</button><button data-lang="ko" class="${qLang==='ko'?'on':''}">한국어</button></span>`;
+}
+// 마일스톤 목록 (단계별)
+function msList(t, stage){
+  if(t.kind==='part') return PQA.ms.filter(m=>PQA.items.some(x=>x.ms===m.k && x.stage===stage));
+  return ROA.ms.filter(m=>m.stage===stage);
+}
+function msLabel(t, m){ return t.kind==='part' ? (qLang==='ko'?m.ko:m.n) : m.k; }
+function msBrief(t, m){
+  if(t.kind==='part') return qLang==='ko' ? m.ko_d : m.en_d;
+  return m.obj || m.expl || '';
+}
 
 function renderPj(){
-  const p=projects.find(x=>x.id===pj.pid); if(!p){ $('pjOverlay').classList.remove('on'); return; }
-  const col=getColor(p.car_model);
-  const keepRes = $('pjResult') ? $('pjResult').value : null;   // 다시 그려도 쓰던 글은 유지
+  const t=pj.t; if(!t){ $('pjOverlay').classList.remove('on'); return; }
+  const isPart = t.kind==='part';
+  const p = isPart ? projects.find(x=>x.id===t.pid) : null;
+  if(isPart && !p){ $('pjOverlay').classList.remove('on'); return; }
+  const car = isPart ? p.car_model : t.car;
+  const col=getColor(car);
+  const keepRes = $('pjResult') ? $('pjResult').value : null;
   const keepSnap = pj.snap;
 
   // ── 머리 ──
-  $('pjHead').innerHTML=`
-    <div class="ep-badge" style="background:${col};">${esc(p.car_model)}</div>
-    <div>
-      <div><span class="ep-title">${esc(p.part_name||'-')}</span> <span class="ep-no">${esc(p.part_number||'')}</span></div>
-      <div class="ep-meta">${esc(p.supplier_name||'-')} · PM <b>${esc(p.pm||'-')}</b>${p.step?` · Step <b>${esc(p.step)}</b>`:''}</div>
-    </div>
-    <div class="x">
-      <span class="lang-tog" title="Handbook 설명 언어"><button data-lang="en" class="${qLang==='en'?'on':''}">EN</button><button data-lang="ko" class="${qLang==='ko'?'on':''}">한국어</button></span>
-      <button class="btn-xs" data-a="editbasic" data-p="${p.id}"><i class="ti ti-pencil"></i> 기본정보</button>
-      <button class="btn-x" id="pjClose" title="닫기 (Esc)">✕</button>
-    </div>`;
+  let head;
+  if(isPart){
+    const cfg=pqaCfg(p.id);
+    head=`<div class="ep-badge" style="background:${col};">${esc(car)}</div>
+      <div>
+        <div><span class="trk sup">협력사 · PQA</span> <span class="ep-title">${esc(p.part_name||'-')}</span> <span class="ep-no">${esc(p.part_number||'')}</span></div>
+        <div class="ep-meta">${esc(p.supplier_name||'-')} · PM <b>${esc(p.pm||'-')}</b>${p.step?` · Step <b>${esc(p.step)}</b>`:''}</div>
+      </div>
+      <div class="cfgbox${cfg.set?'':' unset'}" title="PQA 시나리오와 복잡도에 따라 필수 항목이 정해집니다 (SRM PQA 시나리오 마스터 리스트)">
+        <label>시나리오 <select id="pjSc">${PQA.scenarios.map(s=>`<option value="${s.k}" ${cfg.sc===s.k?'selected':''}>${esc(s[qLang])}</option>`).join('')}</select></label>
+        <label>복잡도 <select id="pjCx">${PQA.complexity.map(c=>`<option value="${c.k}" ${cfg.cx===c.k?'selected':''}>${esc(c[qLang])}</option>`).join('')}</select></label>
+        ${cfg.set?'':'<span class="cfghint">← 부품에 맞게 골라주세요</span>'}
+      </div>`;
+  } else {
+    const parts=projects.filter(x=>x.car_model===car);
+    head=`<div class="ep-badge" style="background:${col};">${esc(car)}</div>
+      <div>
+        <div><span class="trk cus">고객사 · ROA</span> <span class="ep-title">${esc(car)} 개발 마일스톤</span></div>
+        <div class="ep-meta">부품 ${parts.length}개 · ${esc([...new Set(parts.map(x=>x.supplier_name).filter(Boolean))].join(', ')||'-')}</div>
+      </div>`;
+  }
+  $('pjHead').innerHTML = head + `<div class="x">${langToggle()}
+      <button class="btn-xs" data-hb="0"><i class="ti ti-book"></i> Handbook</button>
+      ${isPart?`<button class="btn-xs" data-a="editbasic" data-p="${p.id}"><i class="ti ti-pencil"></i> 기본정보</button>`:''}
+      <button class="btn-x" id="pjClose" title="닫기 (Esc)">✕</button></div>`;
 
   // ── 단계 도식 ──
-  const { nodes } = nodesOf(p.car_model);
+  const { nodes } = nodesOf(car);
   let f='';
   STAGES.forEach((s,i)=>{
-    const nd=nodes.find(n=>n.k===s.k);
-    const g=stageProgress(p.id, s.k);
+    const nd=nodes.find(n=>n.k===s.k), g=progOf(t, s.k);
     let badge='', bst='';
     if(!nd.start){ badge='생략'; bst='background:#1e2739;color:var(--muted)'; }
     else {
@@ -711,14 +746,15 @@ function renderPj(){
       else { badge='진행 중'; bst='background:rgba(99,102,241,.2);color:#a5b4fc'; }
     }
     const w=g.n?Math.round(g.done*100/g.n):0;
+    const ms=msList(t, s.k).map(m=>isPart?m.k.toUpperCase():m.k).join(' · ');
     f+=`<div class="pjs${pj.stage===s.k?' on':''}${nd.start?'':' skip'}" style="--c:${s.c}" data-pjstage="${s.k}">
         <div class="nm"><b>${s.n}</b><span class="st" style="${bst}">${badge}</span></div>
         <div class="dt">${nd.start?ymdS(nd.start):'일정 없음'}</div>
         <div class="pr"><span class="bar"><i style="width:${w}%"></i></span>${g.done}/${g.n}</div>
-        <div class="ms">${STAGE_MS[s.k]}</div></div>`;
+        <div class="ms">${esc(ms||'—')}</div></div>`;
     if(i<STAGES.length-1){
       const nx=STAGES[i+1];
-      const cks=(hasCk?CKS:[]).filter(c=>c.pos>s.pos && c.pos<nx.pos);
+      const cks=(isPart&&hasCk?CKS:[]).filter(c=>c.pos>s.pos && c.pos<nx.pos);
       f+=`<div class="pjarrow">${cks.map(c=>{ const d=toDate(p[c.k]);
           return `<span class="ckp${d?'':' none'}" data-a="ck" data-p="${p.id}" data-f="${c.k}" title="${attr(c.n)} — 눌러서 날짜 입력">★ ${esc(c.s)}<br>${d?md(d):'—'}</span>`; }).join('')}<span>→</span></div>`;
     }
@@ -727,110 +763,130 @@ function renderPj(){
 
   // ── 항목 목록 ──
   const st=STAGES.find(s=>s.k===pj.stage);
-  const acts=stageActs(pj.stage);
-  const vis=acts.filter(a=>pj.showAll || isApplicable(p.id,a,pj.stage));
-  const hiddenN=acts.length-acts.filter(a=>isApplicable(p.id,a,pj.stage)).length;
-  if(pj.act && !vis.some(a=>a.no===pj.act)) pj.act=null;
-  if(!pj.act && vis.length) pj.act=vis[0].no;
-  const g=stageProgress(p.id, pj.stage);
+  const all=itemsOf(t).filter(x=>x.stage===pj.stage && (isPart || !pj.fn || x.fn===pj.fn));
+  const vis=all.filter(x=>pj.showAll || isOn(t,x));
+  const hiddenN=all.length - all.filter(x=>isOn(t,x)).length;
+  if(pj.no && !vis.some(x=>x.no===pj.no)) pj.no=null;
+  if(!pj.no && vis.length) pj.no=vis[0].no;
+  const g=progOf(t, pj.stage);
   let L=`<div class="pjl-top"><span class="tstep" style="background:${STAGE_SOFT[st.k][0]};color:${STAGE_SOFT[st.k][1]}">${st.n}</span>
-      <span class="ttl">체크 항목 · ${g.done}/${g.n} 완료</span>
-      <label title="이 단계에 해당하는 Handbook 항목을 모두 보여주고, 필요한 것을 이 부품에 추가할 수 있습니다">
-        <input type="checkbox" id="pjShowAll" ${pj.showAll?'checked':''}> Handbook 전체 보기${hiddenN?` (+${hiddenN})`:''}</label></div>`;
-  if(!acts.length) L+='<div class="pjd-empty">이 단계에 해당하는 항목이 없습니다.</div>';
-  QRM.cats.forEach(c=>{
-    const items=vis.filter(a=>a.cat===c.k);
+      <span class="ttl">${isPart?'협력사 PQA':'고객사 ROA'} · ${g.done}/${g.n} 완료</span>
+      <label title="이 단계의 모든 항목을 보여주고, 필요한 것을 켜거나 끌 수 있습니다">
+        <input type="checkbox" id="pjShowAll" ${pj.showAll?'checked':''}> 전체 항목 보기${hiddenN?` (+${hiddenN})`:''}</label></div>`;
+  if(!isPart){
+    const fns=[...new Set(itemsOf(t).filter(x=>x.stage===pj.stage).map(x=>x.fn))];
+    L+=`<div class="fnbar"><span class="fnc${pj.fn?'':' on'}" data-fn="">전체</span>${ROA.fns.filter(fn=>fns.includes(fn.k)).map(fn=>
+        `<span class="fnc${pj.fn===fn.k?' on':''}" data-fn="${fn.k}">${esc(fn[qLang])}</span>`).join('')}</div>`;
+  }
+  msList(t, pj.stage).forEach(m=>{
+    const items=vis.filter(x=>x.ms===m.k);
     if(!items.length) return;
-    L+=`<div class="pjl-cat">${esc(c[qLang])}</div>`;
-    items.forEach(a=>{
-      const s=taskState(p.id,a,pj.stage), r=taskRow(p.id,a.no,pj.stage);
-      const nAtt = r ? attachments.filter(x=>x.ptask_id===r.id).length : 0;
+    L+=`<div class="pjl-cat" title="${attr(msBrief(t,m))}">${esc(msLabel(t,m))}<span class="msd">${esc(msBrief(t,m))}</span></div>`;
+    items.forEach(x=>{
+      const s=stateOf(t,x), r=rowOf(t,x.no,x.stage);
+      const nAtt = r ? attachments.filter(a=>a.ptask_id===r.id).length : 0;
       const pd = r && r.plan_date ? slash(r.plan_date).slice(2) : '';
-      L+=`<div class="pjl-it${pj.act===a.no?' on':''}${s==='na'?' na':''}" data-act="${a.no}">
+      const code = isPart ? pqaCode(x, pqaCfg(p.id)) : '';
+      L+=`<div class="pjl-it${pj.no===x.no?' on':''}${s==='na'?' na':''}" data-no="${x.no}">
           <span class="sti ${s}" title="${ST_NAME[s]}">${ST_ICON[s]}</span>
-          <span class="no">${a.no}</span>
-          <span class="tt" title="${attr(tx(a,'title'))}">${esc(tx(a,'title'))}</span>
-          ${pj.showAll && a.rec?'<span class="rec" title="개발 관점 추천 항목">추천</span>':''}
+          ${isPart?`<span class="mo mo-${code==='-'?'x':code}" title="${MO_NAME[code]}">${code==='-'?'·':code}</span>`:`<span class="fnt">${esc(x.fn)}</span>`}
+          <span class="tt" title="${attr(tx(x,'title'))}">${esc(tx(x,'title'))}</span>
           ${nAtt?`<span class="ac">📎${nAtt}</span>`:''}
           ${pd?`<span class="dd${s==='late'?' late':''}">${pd}</span>`:''}</div>`;
     });
   });
-  if(!vis.length && acts.length) L+=`<div class="pjd-empty">이 단계에 켜진 항목이 없습니다.<br>위의 <b>Handbook 전체 보기</b>를 켜고 필요한 항목을 추가하세요.</div>`;
+  if(!vis.length) L+=`<div class="pjd-empty">이 단계에 켜진 항목이 없습니다.<br>위의 <b>전체 항목 보기</b>를 켜고 필요한 항목을 추가하세요.</div>`;
   $('pjList').innerHTML=L;
 
-  // ── 상세 ──
-  renderPjDetail(p);
-  if(keepRes!==null && $('pjResult') && keepSnap!==null && pj.snap===keepSnap){ $('pjResult').value=keepRes; }
+  renderPjDetail();
+  if(keepRes!==null && $('pjResult') && keepSnap!==null && pj.snap===keepSnap) $('pjResult').value=keepRes;
 }
 
-function renderPjDetail(p){
-  const box=$('pjDetail');
-  const a=QACT[pj.act];
-  if(!a){ box.innerHTML='<div class="pjd-empty">왼쪽 목록에서 항목을 고르세요.</div>'; pj.snap=null; return; }
-  const stage=pj.stage, r=taskRow(p.id,a.no,stage);
-  const appl=isApplicable(p.id,a,stage), s=taskState(p.id,a,stage);
-  const L=HB_LBL[qLang];
-  const sec=(k,v,cls)=> v ? `<div class="hb-sec"><h4>${L[k]}</h4><div class="tx ${cls||''}">${esc(v)}</div></div>` : '';
-  const how=tx(a,'how');
-  const rasic=Object.entries(a.rasic||{}).map(([k,v])=>`<span>${esc(k)}<b>${esc(v)}</b></span>`).join('');
-  const atts = r ? attachments.filter(x=>x.ptask_id===r.id) : [];
-  const ms=(a.ms&&a.ms[stage]||[]).join(' · ');
-  const curStatus=(r&&r.status)||'plan';
+function hbChips(nos){
+  if(!nos || !nos.length) return '';
+  return `<div class="hbchips"><span class="lbl">관련 Handbook</span>${nos.map(n=>{ const a=HBACT[n]; if(!a) return '';
+    return `<span class="hbchip" data-hb="${n}" title="Handbook에서 열기">📖 ${n}. ${esc(tx(a,'title'))}</span>`; }).join('')}</div>`;
+}
+function briefHtml(full, key){
+  const txt=String(full||'').trim(); if(!txt) return '';
+  const parts=txt.split(/\n\s*\n/); const head=parts[0], rest=parts.slice(1).join('\n\n');
+  return `<div class="brief">${esc(head)}</div>${rest?`<details class="more"><summary>${qLang==='ko'?'자세히':'More'}</summary><div class="tx">${esc(rest)}</div></details>`:''}`;
+}
 
+function renderPjDetail(){
+  const box=$('pjDetail'), t=pj.t, isPart=t.kind==='part';
+  const x=itemsOf(t).find(i=>i.no===pj.no);
+  if(!x){ box.innerHTML='<div class="pjd-empty">왼쪽 목록에서 항목을 고르세요.</div>'; pj.snap=null; return; }
+  const r=rowOf(t,x.no,x.stage), on=isOn(t,x), s=stateOf(t,x);
+  const atts = r ? attachments.filter(a=>a.ptask_id===r.id) : [];
+  const curStatus=(r&&r.status)||'plan';
+  const ms = isPart ? PQA.ms.find(m=>m.k===x.ms) : ROA.ms.find(m=>m.k===x.ms);
+  let meta='', body='';
+  if(isPart){
+    const code=pqaCode(x, pqaCfg(t.pid));
+    meta=`<span class="tagx">${esc(ms?(qLang==='ko'?ms.ko:ms.n):x.ms)}</span>
+      <span class="tagx mo-${code==='-'?'x':code}">${MO_NAME[code]}</span>
+      <span class="tagx" title="제출 → 판정">${esc(x.sub)} → ${esc(x.app)}</span>
+      ${qLang==='en'?'':`<span class="tagx" title="원문 제목">${esc(x.en.title)}</span>`}`;
+    body = briefHtml(tx(x,'desc'));
+  } else {
+    const fn=ROA.fns.find(f=>f.k===x.fn);
+    meta=`<span class="tagx">${esc(x.ms)}</span><span class="tagx">${esc(fn?fn[qLang]:x.fn)}</span>
+      ${qLang==='en'?'':`<span class="tagx" title="원문 제목">${esc(x.en.title)}</span>`}`;
+    body = `<div class="hb-sec"><h4>${qLang==='ko'?'산출물':'Deliverable'}</h4><div class="brief">${esc(tx(x,'deliv'))}</div></div>
+      ${x.en.crit?`<details class="more"><summary>${qLang==='ko'?'판정 기준 (원문)':'Performance criteria'}</summary><div class="tx">${esc(x.en.crit)}</div></details>`:''}
+      ${ms&&ms.expl?`<details class="more"><summary>${esc(x.ms)} ${qLang==='ko'?'마일스톤 설명':'milestone'}</summary><div class="tx">${esc([ms.expl,ms.obj,ms.detail].filter(Boolean).join('\n\n'))}</div></details>`:''}`;
+  }
   box.innerHTML=`
-    <div class="pjd-t">${a.no}. ${esc(tx(a,'title'))}</div>
-    <div class="pjd-meta">
-      <span class="tagx">${esc(catName(a.cat))}</span>
-      ${ms?`<span class="tagx" title="해당 마일스톤">${esc(ms)}</span>`:''}
-      ${a.rec?'<span class="tagx" style="color:#fcd34d">추천</span>':''}
-      ${qLang==='en'?'':`<span class="tagx" title="영어 원문 제목">${esc(a.en.title)}</span>`}
-    </div>
+    <div class="pjd-t">${esc(tx(x,'title'))}</div>
+    <div class="pjd-meta">${meta}</div>
     <div class="pjd-ctl">
-      ${appl?`<span class="seg">${['plan','doing','done'].map(k=>`<button class="${k}${curStatus===k?' on':''}" data-pjst="${k}">${ST_ICON[k]} ${ST_NAME[k]}</button>`).join('')}</span>
+      ${on?`<span class="seg">${['plan','doing','done'].map(k=>`<button class="${k}${curStatus===k?' on':''}" data-pjst="${k}">${ST_ICON[k]} ${ST_NAME[k]}</button>`).join('')}</span>
         <span class="dl">계획일 <span data-pjdate="plan_date" class="${r&&r.plan_date?'':'ph'}">${r&&r.plan_date?slash(r.plan_date):'지정'}</span></span>
         <span class="dl">완료일 <span data-pjdate="done_date" class="${r&&r.done_date?'':'ph'}">${r&&r.done_date?slash(r.done_date):'—'}</span></span>
         ${s==='late'?'<span class="tagx" style="color:#fca5a5">▲ 지연</span>':''}
         <span class="sp"></span>
-        <button class="btn-xs danger" data-pjappl="0" title="이 부품에서는 이 항목을 하지 않음">이 부품에서 제외</button>`
-      :`<span style="font-size:12px;color:var(--sub)">이 부품에서는 제외된 항목입니다.</span><span class="sp"></span>
-        <button class="btn-xs solid" data-pjappl="1">+ 이 부품에 추가</button>`}
+        <button class="btn-xs danger" data-pjappl="0" title="이 ${isPart?'부품':'차종'}에서는 이 항목을 하지 않음">제외</button>`
+      :`<span style="font-size:12px;color:var(--sub)">이 ${isPart?'부품':'차종'}에서는 꺼져 있는 항목입니다.</span><span class="sp"></span>
+        <button class="btn-xs solid" data-pjappl="1">+ 추가</button>`}
     </div>
-    ${sec('why',tx(a,'why'))}
-    ${sec('what',tx(a,'what'))}
-    ${how?`<div class="hb-sec"><h4>${L.how}</h4><div class="tx hb-how${how.length>900?' clip':''}" id="pjHow">${esc(how)}</div>
-       ${how.length>900?`<span class="hb-more" id="pjHowMore">${qLang==='en'?'Show all ▾':'전체 보기 ▾'}</span>`:''}</div>`:''}
-    <div class="hb-grid">${sec('input',tx(a,'input'))}${sec('deliverable',tx(a,'deliverable'))}</div>
-    <div class="hb-grid">${sec('leader',tx(a,'leader'))}${sec('support',tx(a,'support'))}</div>
-    ${rasic?`<div class="hb-sec"><h4>${L.rasic}</h4><div class="rasic">${rasic}</div></div>`:''}
-    ${a.refs?sec('refs',a.refs):''}
-    <div class="pjd-res" data-drop="ptask" data-dropid="${p.id}">
+    ${body}
+    ${hbChips(x.hb)}
+    <div class="pjd-res" data-drop="ptask" data-dropid="${isPart?t.pid:0}">
       <div class="hb-sec" style="margin-bottom:6px"><h4>결과 (Result)</h4></div>
-      <textarea id="pjResult" placeholder="이 항목을 어떻게 했는지, 결론, 남은 이슈를 적어두세요." ${appl?'':'disabled'}>${esc(r&&r.result||'')}</textarea>
+      <textarea id="pjResult" placeholder="어떻게 했는지, 결론, 남은 이슈를 적어두세요." ${on?'':'disabled'}>${esc(r&&r.result||'')}</textarea>
       <div class="row"><span class="hint">Ctrl+Enter 저장 · 파일은 이 영역에 끌어넣거나 Ctrl+V</span>
-        <button class="btn-xs solid" id="pjSave" ${appl?'':'disabled'}>저장</button></div>
-      <div class="pjd-atts">${atts.map(x=>`<div class="photo-item${isExternal(x)?' is-link':''}">${attachHtml(x,'lg')}<button class="photo-del" data-a="delpic" data-id="${x.id}">✕</button></div>`).join('')}
-        ${appl?`<div class="photo-add" data-pjadd="file"><i class="ti ti-paperclip"></i>파일</div><div class="photo-add" data-pjadd="link"><i class="ti ti-link"></i>링크</div>`:''}</div>
+        <button class="btn-xs solid" id="pjSave" ${on?'':'disabled'}>저장</button></div>
+      <div class="pjd-atts">${atts.map(a=>`<div class="photo-item${isExternal(a)?' is-link':''}">${attachHtml(a,'lg')}<button class="photo-del" data-a="delpic" data-id="${a.id}">✕</button></div>`).join('')}
+        ${on?`<div class="photo-add" data-pjadd="file"><i class="ti ti-paperclip"></i>파일</div><div class="photo-add" data-pjadd="link"><i class="ti ti-link"></i>링크</div>`:''}</div>
     </div>`;
   pj.snap = (r&&r.result)||'';
 }
 
 // ── 저장 ──
-function needTasks(){
-  if(hasTasks) return true;
-  alert('체크 항목을 저장하려면 migration.sql 의 마지막 부분(2026-10-19)을 Supabase SQL Editor 에서 실행해 주세요.');
-  return false;
+function sqlHint(err){
+  const m=String(err&&err.message||err);
+  if(/car_model|project_id/.test(m)) return '\n\n차종 단위 체크를 쓰려면 migration.sql 의 "2026-10-19 · 2" 부분을 Supabase SQL Editor 에서 실행해 주세요.';
+  return '';
 }
-async function saveTask(patch){
-  if(!needTasks()) return null;
-  const row=Object.assign({ project_id:pj.pid, act_no:pj.act, stage:pj.stage, updated_at:new Date().toISOString() }, patch);
+async function saveTaskFor(t, no, stage, patch){
+  if(!hasTasks){ alert('체크 항목을 저장하려면 migration.sql 의 2026-10-19 부분을 Supabase SQL Editor 에서 실행해 주세요.'); return null; }
+  const r=rowOf(t, no, stage);
+  const p=Object.assign({ updated_at:new Date().toISOString() }, patch);
   showLoading('저장 중...');
-  const { data, error } = await sb.from('project_tasks').upsert(row, { onConflict:'project_id,act_no,stage' }).select();
+  const res = r
+    ? await sb.from('project_tasks').update(p).eq('id', r.id).select()
+    : await sb.from('project_tasks').insert(Object.assign(
+        t.kind==='part' ? { project_id:t.pid } : { project_id:null, car_model:t.car },
+        { act_no:no, stage }, p)).select();
   hideLoading();
-  if(error){ alert('저장 실패: '+error.message); return null; }
-  const saved=data[0];
-  ptasks=ptasks.filter(t=>t.id!==saved.id).concat(saved);
+  if(res.error){ alert('저장 실패: '+res.error.message+sqlHint(res.error)); return null; }
+  const saved=res.data[0];
+  ptasks=ptasks.filter(x=>x.id!==saved.id).concat(saved);
   return saved;
 }
+function curItem(){ return itemsOf(pj.t).find(i=>i.no===pj.no); }
+async function saveTask(patch){ const x=curItem(); return x ? saveTaskFor(pj.t, x.no, x.stage, patch) : null; }
 async function saveResult(){
   const ta=$('pjResult'); if(!ta) return true;
   const saved=await saveTask({ result:ta.value });
@@ -839,63 +895,109 @@ async function saveResult(){
   return true;
 }
 async function setTaskStatus(st){
-  const r=taskRow(pj.pid,pj.act,pj.stage);
+  const x=curItem(), r=rowOf(pj.t,x.no,x.stage);
   const patch={ status:st };
   if(st==='done' && !(r&&r.done_date)) patch.done_date=ymd(today);
   if(st!=='done') patch.done_date=null;
-  if(pjDirty()) patch.result=$('pjResult').value;    // 쓰던 결과도 같이 저장
+  if(pjDirty()) patch.result=$('pjResult').value;
   if(await saveTask(patch)){ if(patch.result!==undefined) pj.snap=patch.result; renderMain(); renderPj(); }
 }
 async function setTaskDate(field){
-  const r=taskRow(pj.pid,pj.act,pj.stage);
+  const x=curItem(), r=rowOf(pj.t,x.no,x.stage);
   const v=askDate(field==='plan_date'?'계획일':'완료일', r&&r[field]);
   if(v===undefined) return;
   if(await saveTask({ [field]:v })){ renderMain(); renderPj(); }
 }
 async function setTaskAppl(on){
-  const a=QACT[pj.act];
-  // 추천 기본값과 같아지면 null 로 되돌려 기본값을 따르게 한다
-  const v = (on===a.rec) ? null : on;
+  const x=curItem();
+  const v = (on===defaultOn(pj.t,x)) ? null : on;     // 기본값과 같으면 null 로 되돌린다
   if(await saveTask({ applicable:v })){
-    if(!on && !pj.showAll) pj.act=null;
+    if(!on && !pj.showAll) pj.no=null;
     renderMain(); renderPj();
   }
 }
-// 이 항목의 첨부 — 기록 줄이 없으면 먼저 만든다
+async function savePqaCfg(){
+  const sc=$('pjSc').value, cx=Number($('pjCx').value);
+  if(await saveTaskFor(pj.t, 0, 'cfg', { result:JSON.stringify({ sc, cx }), applicable:false })){ pj.no=null; renderMain(); renderPj(); }
+}
 async function ensureTaskId(){
-  const r=taskRow(pj.pid,pj.act,pj.stage);
+  const x=curItem(); if(!x) return null;
+  const r=rowOf(pj.t,x.no,x.stage);
   if(r) return r.id;
   const saved=await saveTask({});
   return saved ? saved.id : null;
 }
-async function pjUpload(files){
-  if(!pj.pid || !pj.act) return;
-  const id=await ensureTaskId(); if(!id) return;
-  uploadFiles(files, pj.pid, null, null, id);
-}
-async function pjAddFile(){
-  const id=await ensureTaskId(); if(!id) return;
-  addFile(pj.pid, null, null, id);
-}
-async function pjAddLink(){
-  const id=await ensureTaskId(); if(!id) return;
-  addLink(pj.pid, null, null, id);
-}
+function pjPid(){ return pj.t.kind==='part' ? pj.t.pid : null; }
+async function pjUpload(files){ if(!pj.t || !pj.no) return; const id=await ensureTaskId(); if(id) uploadFiles(files, pjPid(), null, null, id); }
+async function pjAddFile(){ const id=await ensureTaskId(); if(id) addFile(pjPid(), null, null, id); }
+async function pjAddLink(){ const id=await ensureTaskId(); if(id) addLink(pjPid(), null, null, id); }
 
 function onPjClick(e){
   if(e.target.closest('#pjClose')){ closePj(); return; }
   const lb=e.target.closest('[data-lang]'); if(lb){ setLang(lb.dataset.lang); return; }
+  const hb=e.target.closest('[data-hb]'); if(hb){ openHb(Number(hb.dataset.hb)||null); return; }
   const stg=e.target.closest('[data-pjstage]');
-  if(stg){ (async()=>{ if(!await pjLeave()) return; pj.stage=stg.dataset.pjstage; pj.act=null; pj.snap=null; renderPj(); })(); return; }
-  const it=e.target.closest('[data-act]');
-  if(it){ const no=Number(it.dataset.act); if(no===pj.act) return;
-    (async()=>{ if(!await pjLeave()) return; pj.act=no; pj.snap=null; renderPj(); })(); return; }
+  if(stg){ (async()=>{ if(!await pjLeave()) return; pj.stage=stg.dataset.pjstage; pj.no=null; pj.snap=null; renderPj(); })(); return; }
+  const fn=e.target.closest('[data-fn]');
+  if(fn){ pj.fn=fn.dataset.fn; pj.no=null; renderPj(); return; }
+  const it=e.target.closest('[data-no]');
+  if(it){ const no=Number(it.dataset.no); if(no===pj.no) return;
+    (async()=>{ if(!await pjLeave()) return; pj.no=no; pj.snap=null; renderPj(); })(); return; }
   const stb=e.target.closest('[data-pjst]'); if(stb){ setTaskStatus(stb.dataset.pjst); return; }
   const dt=e.target.closest('[data-pjdate]'); if(dt){ setTaskDate(dt.dataset.pjdate); return; }
   const ap=e.target.closest('[data-pjappl]'); if(ap){ setTaskAppl(ap.dataset.pjappl==='1'); return; }
   const ad=e.target.closest('[data-pjadd]'); if(ad){ if(ad.dataset.pjadd==='file') pjAddFile(); else pjAddLink(); return; }
   if(e.target.closest('#pjSave')){ saveResult(); return; }
-  if(e.target.closest('#pjHowMore')){ const h=$('pjHow'); h.classList.remove('clip'); e.target.remove(); return; }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  Handbook 자료실 (QRM Handbook 4.0 rel 2.3 — 49개 활동, EN / 한국어)
+// ════════════════════════════════════════════════════════════════
+const hb = { no:null, q:'' };
+const HB_LBL = {
+  en:{ why:'Why', what:'What', how:'How this activity must be performed', input:'Key input', deliverable:'Deliverable',
+       leader:'Activity leader', support:'Key support', rasic:'RASIC', refs:'Templates & procedures', stages:'Stages' },
+  ko:{ why:'목적 (Why)', what:'내용 (What)', how:'수행 방법 (How)', input:'주요 입력', deliverable:'산출물',
+       leader:'주관', support:'지원', rasic:'RASIC', refs:'양식 · 절차', stages:'적용 단계' }
+};
+function openHb(no){
+  if(no) hb.no=no;
+  if(!hb.no && QRM.acts.length) hb.no=QRM.acts[0].no;
+  $('hbOverlay').classList.add('on');
+  renderHb();
+}
+function renderHb(){
+  document.querySelectorAll('#hbBox .lang-tog button').forEach(b=>b.classList.toggle('on', b.dataset.lang===qLang));
+  const q=hb.q.trim().toLowerCase();
+  const hit=a=>!q || [a.en.title,a.ko.title,a.en.why,a.ko.why,String(a.no)].some(v=>v && v.toLowerCase().includes(q));
+  let L='';
+  QRM.cats.forEach(c=>{
+    const items=QRM.acts.filter(a=>a.cat===c.k && hit(a));
+    if(!items.length) return;
+    L+=`<div class="pjl-cat">${esc(c[qLang])}</div>`;
+    items.forEach(a=>{ L+=`<div class="pjl-it${hb.no===a.no?' on':''}" data-hbno="${a.no}"><span class="no">${a.no}</span><span class="tt" title="${attr(tx(a,'title'))}">${esc(tx(a,'title'))}</span></div>`; });
+  });
+  $('hbList').innerHTML = L || '<div class="pjd-empty">검색 결과가 없습니다.</div>';
+  const a=HBACT[hb.no], LB=HB_LBL[qLang];
+  if(!a){ $('hbDetail').innerHTML='<div class="pjd-empty">왼쪽에서 활동을 고르세요.</div>'; return; }
+  const sec=(k,v)=> v ? `<div class="hb-sec"><h4>${LB[k]}</h4><div class="tx">${esc(v)}</div></div>` : '';
+  const rasic=Object.entries(a.rasic||{}).map(([k,v])=>`<span>${esc(k)}<b>${esc(v)}</b></span>`).join('');
+  const stg=a.stages.map(k=>{ const s=STAGES.find(x=>x.k===k); return `<span class="tagx" style="color:${s.c}" title="${attr((a.ms[k]||[]).join(' · '))}">${s.n}</span>`; }).join('');
+  $('hbDetail').innerHTML=`
+    <div class="pjd-t">${a.no}. ${esc(tx(a,'title'))}</div>
+    <div class="pjd-meta"><span class="tagx">${esc((QRM.cats.find(c=>c.k===a.cat)||{})[qLang]||'')}</span>${stg}
+      ${qLang==='en'?'':`<span class="tagx">${esc(a.en.title)}</span>`}</div>
+    ${sec('why',tx(a,'why'))}${sec('what',tx(a,'what'))}${sec('how',tx(a,'how'))}
+    <div class="hb-grid">${sec('input',tx(a,'input'))}${sec('deliverable',tx(a,'deliverable'))}</div>
+    <div class="hb-grid">${sec('leader',tx(a,'leader'))}${sec('support',tx(a,'support'))}</div>
+    ${rasic?`<div class="hb-sec"><h4>${LB.rasic}</h4><div class="rasic">${rasic}</div></div>`:''}
+    ${a.refs?sec('refs',a.refs):''}`;
+  $('hbDetail').scrollTop=0;
+}
+function onHbClick(e){
+  if(e.target.closest('#hbClose')){ $('hbOverlay').classList.remove('on'); return; }
+  const lb=e.target.closest('[data-lang]'); if(lb){ setLang(lb.dataset.lang); return; }
+  const it=e.target.closest('[data-hbno]'); if(it){ hb.no=Number(it.dataset.hbno); renderHb(); }
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -1598,7 +1700,7 @@ function initDropPaste(){
     const files=e.clipboardData && e.clipboardData.files;
     if(!files || !files.length) return;        // 글자 붙여넣기는 그대로 둔다
     // 부품 상세 창이 열려 있으면 고른 항목으로 (위에 다른 편집창이 없을 때)
-    const pjOn = $('pjOverlay').classList.contains('on') && !$('modalOverlay').classList.contains('on') && pj.act;
+    const pjOn = $('pjOverlay').classList.contains('on') && !$('modalOverlay').classList.contains('on') && pj.no;
     const c = modalTodoId ? { tid:modalTodoId } : pjOn ? { ptask:true } : hoverDrop;
     if(!c){ alert('붙여넣을 위치에 마우스를 올린 뒤 Ctrl+V 하세요.\n(이슈 행 또는 단계 카드)'); return; }
     e.preventDefault();
@@ -1811,11 +1913,17 @@ function init(){
   $('pjBox').addEventListener('click', onPjClick);
   $('pjBox').addEventListener('change', e=>{
     if(e.target.id==='pjShowAll'){ pj.showAll=e.target.checked; renderPj(); }
+    if(e.target.id==='pjSc' || e.target.id==='pjCx') savePqaCfg();
   });
   $('pjBox').addEventListener('keydown', e=>{
     if(e.target.id==='pjResult' && e.key==='Enter' && (e.ctrlKey||e.metaKey)){ e.preventDefault(); saveResult(); }
   });
   onBackdropClick('pjOverlay', closePj);
+  // Handbook 자료실
+  $('hbBtn').addEventListener('click', ()=>openHb());
+  $('hbBox').addEventListener('click', onHbClick);
+  $('hbFind').addEventListener('input', e=>{ hb.q=e.target.value; renderHb(); });
+  onBackdropClick('hbOverlay', ()=>$('hbOverlay').classList.remove('on'));
 
   $('bomSearch').addEventListener('input', renderBOM);
   // 협력사 고르기
@@ -1862,6 +1970,7 @@ function init(){
     if(e.key!=='Escape') return;
     if($('viewer').classList.contains('on')){ $('viewer').classList.remove('on'); return; }
     if($('modalOverlay').classList.contains('on')){ tryCloseModal(); return; }
+    if($('hbOverlay').classList.contains('on')){ $('hbOverlay').classList.remove('on'); return; }
     if($('bigOverlay').classList.contains('on')){ closeBig(false); return; }
     if($('pjOverlay').classList.contains('on')) closePj();
   });
