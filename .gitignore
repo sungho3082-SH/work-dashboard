@@ -12,3 +12,6 @@ Thumbs.db
 
 # DB 에 이미 반영된 초기 데이터 (협력사 지적사항 본문 포함)
 import_data.sql
+
+# Google Drive 에서 받은 참고 문서 (사내 자료)
+참고자료/

@@ -101,3 +101,38 @@ alter table todos add column if not exists open_date date;
 update todos set open_date = created_at::date where open_date is null;
 
 select 'todos.open_date 준비됨' as result, count(*) as 채워진행 from todos where open_date is not null;
+
+-- ════════════════════════════════════════════════════════
+-- 추가 (2026-10-19) : HOME 탭 — 부품별 단계 체크 항목 (QRM Handbook)
+-- 이미 실행했어도 다시 돌려도 안전합니다.
+-- ════════════════════════════════════════════════════════
+
+-- 부품 담당 PM (HOME 표의 PM 칸)
+alter table projects add column if not exists pm text;
+
+-- 부품 × Handbook 활동 × 단계 마다 한 줄 (손댄 항목만 생깁니다)
+create table if not exists project_tasks (
+  id          bigserial primary key,
+  project_id  bigint not null references projects(id) on delete cascade,
+  act_no      int    not null,          -- Handbook 4.0 활동 번호 (qrm_data.js)
+  stage       text   not null,          -- proto / p1 / p2 / m / sop
+  applicable  boolean,                  -- null = 기본값(추천 여부) 따름, false = 이 부품에서 제외
+  status      text   default 'plan',    -- plan / doing / done
+  plan_date   date,
+  done_date   date,
+  result      text,
+  updated_at  timestamptz default now(),
+  created_at  timestamptz default now(),
+  unique (project_id, act_no, stage)
+);
+create index if not exists project_tasks_proj_idx on project_tasks (project_id);
+
+-- 항목별 첨부
+alter table attachments add column if not exists ptask_id bigint references project_tasks(id) on delete cascade;
+
+alter table project_tasks enable row level security;
+drop policy if exists "project_tasks public" on project_tasks;
+create policy "project_tasks public" on project_tasks
+  for all to anon, authenticated using (true) with check (true);
+
+select 'project_tasks 준비됨' as result, count(*) from project_tasks;

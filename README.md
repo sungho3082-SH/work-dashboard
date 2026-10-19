@@ -10,13 +10,17 @@ Hanon Systems P&SD 부품 개발 일정 · 이슈 · BOM · To-Do 관리 대시�
 | `index.html` | 화면 전체 (다크 테마, 4개 탭) |
 | `app.js` | 로직 (Supabase 연동, 플로우 렌더링, 편집) |
 | `config.js` | Supabase URL / anon 키 |
+| `qrm_data.js` | QRM Handbook 활동 49개 (영/한, 단계 배치, 추천 여부) — 자동 생성 |
 | `migration.sql` | DB 스키마 (한 번 실행) |
 
-배포에 필요한 건 위 4개 중 `index.html` / `app.js` / `config.js` 3개뿐입니다.
+배포에 필요한 건 `index.html` / `app.js` / `config.js` / `qrm_data.js` 4개입니다.
 
 ## 탭
 
-- **홈** — 차종별 일정 플로우 + 협력사별 이슈 요약. 이슈는 `(MM/DD)` 단위로 쪼개져 날짜 칩으로 필터됩니다.
+- **HOME** — 차종 ▸ 부품 엑셀형 표. 단계 일정(지난 일정 취소선 · 30일/90일 이내 색 · 다음 단계 테두리), 부품별 단계 체크 진행률, 월별 현황(단계 칩 · ★체크포인트).
+  부품 행을 누르면 상세 창: Proto~SOP 단계 도식 → 단계별 체크 항목 → 항목의 목적·방법(Handbook 원문, EN/한국어 전환)·결과·첨부.
+  주소 끝에 `#p=부품id&s=p2&a=16` 을 붙이면 해당 부품/단계/항목이 바로 열립니다.
+- **MEMO** — (예전 홈) 차종별 일정 플로우 + 협력사별 이슈 요약. 이슈는 `(MM/DD)` 단위로 쪼개져 날짜 칩으로 필터됩니다.
 - **타임라인** — 차종 행을 누르면 부품 목록, 부품을 누르면 Proto~SOP 5개 컬럼이 세로로 펼쳐집니다.
 - **BOM** — 차종별 BOM 트리. 접기/펼치기, 품번·품명 검색.
 - **To-Do** — 표 형태 할 일 관리.
@@ -26,7 +30,15 @@ Hanon Systems P&SD 부품 개발 일정 · 이슈 · BOM · To-Do 관리 대시�
 - `projects` — 부품 단위. 부품명/품번/협력사/Step/공급망(`delivery`)/단계별 이슈(`proto_issue`~`sop_issue`)/체크포인트(`ck_*`)
 - `car_schedules` — **일정은 차종 단위**입니다. 한 차종의 Proto~SOP 날짜를 여기서 관리하고, 그 차종의 모든 부품이 공유합니다.
 - `bom` — 차종별 BOM 행 (`level` 로 트리 깊이 표현)
-- `todos` / `attachments` — 할 일, 첨부파일(Storage `photos` 버킷)
+- `todos` / `attachments` — 할 일, 첨부파일(Storage `photos` 버킷). 체크 항목 첨부는 `attachments.ptask_id`
+- `project_tasks` — 부품 × Handbook 활동 × 단계 한 줄. 상태(계획/진행/완료), 계획일·완료일, 결과, 적용 여부(`null` 이면 추천 기본값)
+
+## QRM Handbook 체크 항목
+
+- 기준: QRM Handbook **4.0 release 2.3** (49개 활동). 단계 배치는 rev 3.0 마일스톤표를 HKMC 단계로 옮긴 것
+  (Proto = CAAV~DESF · P1 = IARV~OFTO · P2 = OTOP · M = FDPR/ISVA · SOP = SOPR~PRCL)
+- 협력사 부품 개발 관점의 **추천 30개**만 기본으로 켜져 있고, 나머지는 상세 창의 "Handbook 전체 보기"에서 부품별로 추가/제외
+- 원문은 `참고자료/` 폴더의 엑셀에서 추출합니다 (`.gitignore` 로 제외)
 
 ## 처음 세팅
 
